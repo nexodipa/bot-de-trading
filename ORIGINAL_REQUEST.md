@@ -209,4 +209,37 @@ Implementar en `bot/binance_square.py` y `bot/growth_traffic_engine.py` un gener
   * Manejo de mocks de la API de Binance Square (éxito, error HTTP 400/429/500, timeout).
 - [ ] La suite de pruebas del proyecto pasa al 100% sin regresiones en las 246 pruebas existentes.
 
+## Follow-up — 2026-09-25T16:10:16Z
 
+Potenciar el motor de ejecución cuantitativo (`C:\Users\USUARIO\bot de trading` y `C:\Users\USUARIO\bot_ibkr_trading`) para que opere activamente con alta frecuencia de entrada sin bloqueos (`invalid_day_start_equity`, `*_no_edge`), y reestructurar las notificaciones de Telegram para enviar únicamente 2 resúmenes ejecutivos al día (cada 12 horas) y órdenes reales, eliminando mensajes de pausa y códigos técnicos crípticos.
+
+Working directory: C:\Users\USUARIO\bot de trading
+Integrity mode: development
+
+## Requirements
+
+### R1. Desbloqueo de Ejecución Activa y Calibración de Fuerza Operativa ("Darle Fuerza al Bot")
+- **Eliminación definitiva de `invalid_day_start_equity`:** En `bot/live.py`, `bot/risk.py` y en la instancia de acciones (`C:\Users\USUARIO\bot_ibkr_trading`), cuando `day_start_equity <= 0` o no pueda leerse temporalmente el balance inicial del día, el sistema debe auto-inicializar `day_start_equity` automáticamente con el capital actual (o un capital base seguro por defecto) en lugar de activar `risk_pause` o bloquear las compras.
+- **Modo de Entrada Proactivo Multi-Estrategia:** Modificar la evaluación de señales en `bot/strategy.py`, `bot/live.py` y `bot/main.py` (además de la configuración `.env`) para que cuando la estrategia asignada a un par no dispare un gatillo extremo aislado (`connors_no_edge`, `turtle_no_edge`, `elder_no_edge`), el cerebro evalúe en cascada todas las estrategias disponibles más un gatillo activo de **impulso y tendencia en vivo (Active Momentum / Trend Continuation)** con umbrales dinámicos flexibilizados (`MIN_CONFIDENCE`, `MIN_ENTRY_QUALITY`), asegurando que el bot tome posiciones reales de compra (`BUY`) en cuanto exista flujo positivo sin quedarse paralizado en `hold`.
+- **Inmunidad ante Sobreescritura de Auto-Tuning:** Evitar que `perform_auto_tuning` bloquee a los símbolos en modos pasivos que impidan compras o rechace configuraciones dejándolas en umbrales inalcanzables.
+
+### R2. Rediseño de Comunicaciones en Telegram: Solo 2 Resúmenes al Día y Lenguaje Humano Natural
+- **Frecuencia Estricta de 2 Resúmenes al Día (Cada 12 Horas):** Ajustar `AutoTrafficPublisher` (`bot/growth_traffic_engine.py`) y el motor de telemetría (`bot/main.py`, `bot/telemetry.py`) para que en Telegram **solo** se envíen:
+  1. **Dos resúmenes ejecutivos al día** (intervalo de 12 horas / 720 minutos) consolidando el estado del mercado y de la cartera.
+  2. **Ejecuciones reales de compra y venta (`live_buy` y `live_sell`)**.
+- **Supresión Total de Mensajes de "Pausa" y Códigos Crípticos:** Desactivar el envío de alertas individuales de `risk_pause` / `live_guard` a Telegram. Reemplazar el formateador (`_format_live_alert` en `bot/main.py` y en `C:\Users\USUARIO\bot_ibkr_trading\bot\main.py`) para que jamás muestre textos como *"Se ha activado el protocolo de protección"*, *"Motivo: invalid_day_start_equity"* ni *"Estado: Operaciones pausadas temporalmente"*.
+- **Explicación Humana de Inactividad:** Cuando se informe por qué un activo no ha operado, indicar únicamente en lenguaje natural y profesional que el activo **«se mantiene sin operar debido a [explicación clara en español del factor de mercado, ej.: consolidación lateral de precio, espera de volumen comprador o ajuste de liquidez]»**, sin hablar nunca de pausas ni de errores de código.
+
+### R3. Sincronización en Ambos Entornos (Cripto + Acciones `#MSFT`)
+- Aplicar la corrección de `invalid_day_start_equity` y el nuevo formato de mensajes sin pausas tanto en `C:\Users\USUARIO\bot de trading` como en `C:\Users\USUARIO\bot_ibkr_trading` (donde se monitorean acciones como `#MSFT`, `#AAPL`, `#NVDA`), verificando que ningún proceso en segundo plano pueda volver a emitir la alerta críptica de `#MSFT`.
+
+## Acceptance Criteria
+
+### Ejecución Activa y Fuerza de Compra
+- [ ] `LiveTrader` inicializa automáticamente `day_start_equity` cuando es `<= 0`, haciendo imposible que se produzca el estado `invalid_day_start_equity` tanto en cripto (`bot de trading`) como en acciones (`bot_ibkr_trading`).
+- [ ] Con datos reales/actuales de mercado en tendencia alcista o rebote (`bullish_trend` / `range_bound`), el motor de estrategia genera señales `BUY` efectivas en lugar de quedar bloqueado indefinidamente en `connors_no_edge`, `turtle_no_edge` o `elder_no_edge`.
+
+### Comunicaciones Limpias en Telegram (2 Veces al Día)
+- [ ] El bucle de publicaciones automáticas de Telegram está configurado a un intervalo de 12 horas (2 resúmenes al día), eliminando el spam de alertas intermedias.
+- [ ] Ningún mensaje de Telegram contiene las cadenas `"protocolo de protección"`, `"invalid_day_start_equity"`, ni `"Operaciones pausadas temporalmente"`. Cualquier condición de espera se traduce a *"Se mantiene sin operar debido a [factor de mercado en lenguaje humano]"*.
+- [ ] Suite de pruebas unitarias e integrales ejecutándose al 100% sin regresiones.

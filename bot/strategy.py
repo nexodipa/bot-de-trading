@@ -147,7 +147,11 @@ class HybridStrategy:
         rsi_ok = float(fx["rsi"]) <= self.cfg.max_entry_rsi
         chase_ok = atr_value > 0 and close <= ema_fast + (atr_value * self.cfg.max_chase_atr_mult)
         momentum_ok = float(fx["macd_hist_slope"]) >= 0 or float(fx["macd_hist"]) > 0
-        price_context_ok = close >= float(fx["vwap_20"]) or entry.reason.startswith("mean_reversion")
+        price_context_ok = (
+            close >= float(fx["vwap_20"]) * 0.995
+            or entry.reason.startswith("mean_reversion")
+            or "active_momentum" in entry.reason
+        )
 
         quality += 0.18 if regime_ok else 0.0
         quality += 0.18 * float(macro.get("score", 1.0))
@@ -456,34 +460,131 @@ class HybridStrategy:
             return Signal("buy", min(score, 1.0), "williams_alligator")
         return Signal("hold", min(score, 1.0), "williams_no_edge")
 
+    def _active_momentum_signal(self, fx: pd.Series, regime: MarketRegime) -> Signal:
+        """Active Momentum / Trend Continuation: Entrada activa en flujo comprador y continuidad alcista."""
+        if not (
+            self._is_finite(fx.get("close"))
+            and self._is_finite(fx.get("ema_fast"))
+            and self._is_finite(fx.get("ema_slow"))
+            and self._is_finite(fx.get("rsi"))
+        ):
+            return Signal("hold", 0.0, "active_momentum_insufficient_data")
+
+        close = float(fx["close"])
+        ema_fast = float(fx["ema_fast"])
+        ema_slow = float(fx["ema_slow"])
+        ema_200 = float(fx["ema_200"]) if self._is_finite(fx.get("ema_200")) else ema_slow
+        ema_slow_slope = float(fx["ema_slow_slope"]) if self._is_finite(fx.get("ema_slow_slope")) else 0.0
+
+        macd_hist = float(fx["macd_hist"]) if self._is_finite(fx.get("macd_hist")) else 0.0
+        macd_hist_slope = float(fx["macd_hist_slope"]) if self._is_finite(fx.get("macd_hist_slope")) else 0.0
+        rsi_val = float(fx["rsi"])
+        max_rsi = min(78.0, float(getattr(self.cfg, "max_entry_rsi", 80.0)))
+        mom_8 = float(fx["mom_8"]) if self._is_finite(fx.get("mom_8")) else 0.0
+        min_trend = float(getattr(self.cfg, "min_trend_strength", 0.0001))
+        prev_close = float(fx["prev_close"]) if self._is_finite(fx.get("prev_close")) else close
+
+        vol_z = float(fx["vol_z"]) if self._is_finite(fx.get("vol_z")) else 0.0
+        min_vol_z = float(getattr(self.cfg, "min_volume_z", -0.25))
+        vwap_20 = float(fx["vwap_20"]) if self._is_finite(fx.get("vwap_20")) else close
+
+        # 1. Trend Stack
+        trend_stack_ok = (close > ema_fast and ema_fast > ema_slow * 0.998) or (
+            close > ema_200 and ema_slow_slope >= -0.0005
+        )
+
+        # 2. Momentum Flow
+        macd_ok = macd_hist > 0 or macd_hist_slope >= -0.0002
+        rsi_ok = 46.0 <= rsi_val <= max_rsi
+        momentum_ok = mom_8 >= min_trend or close > prev_close
+        momentum_flow_ok = macd_ok and rsi_ok and momentum_ok
+
+        # 3. Volume / Price Benchmark
+        volume_price_ok = (vol_z >= min_vol_z) and (close >= vwap_20 * 0.995)
+
+        # Scoring
+        score = 0.50
+        score += 0.15 if (close > ema_fast and ema_fast > ema_slow) else 0.05
+        score += 0.10 if macd_hist > 0 else 0.05
+        score += 0.10 if (50.0 <= rsi_val <= 72.0) else 0.05
+        score += 0.10 if vol_z >= 0.0 else 0.05
+        if regime.name == "bullish_trend":
+            score += 0.10
+
+        if trend_stack_ok and momentum_flow_ok and volume_price_ok:
+            return Signal("buy", min(score, 1.0), "active_momentum")
+        return Signal("hold", min(score, 1.0), "active_momentum_no_edge")
+
     def _entry_signal(self, fx: pd.Series, regime: MarketRegime) -> Signal:
         mode = self.cfg.strategy_mode
-        if mode == "trend" or mode == "elder_triple":
-            return self._elder_triple_signal(fx, regime)
-        if mode == "breakout" or mode == "turtle_breakout":
-            return self._turtle_breakout_signal(fx, regime)
-        if mode == "pullback_trend" or mode == "connors_rsi":
-            return self._connors_rsi_signal(fx, regime)
-        if mode == "mean_reversion":
-            return self._mean_reversion_signal(fx, regime)
-        if mode == "williams_alligator":
-            return self._williams_alligator_signal(fx, regime)
+        primary_fn = None
+        if mode in ("trend", "elder_triple"):
+            primary_fn = self._elder_triple_signal
+        elif mode in ("breakout", "turtle_breakout"):
+            primary_fn = self._turtle_breakout_signal
+        elif mode in ("pullback_trend", "connors_rsi"):
+            primary_fn = self._connors_rsi_signal
+        elif mode == "mean_reversion":
+            primary_fn = self._mean_reversion_signal
+        elif mode == "williams_alligator":
+            primary_fn = self._williams_alligator_signal
+        elif mode == "active_momentum":
+            primary_fn = self._active_momentum_signal
+        elif mode == "trend_following":
+            primary_fn = self._trend_signal
+        elif mode == "pullback":
+            primary_fn = self._pullback_trend_signal
 
-        # En modo auto, priorizamos pullbacks y reversión a la media
+        # Si el modo primario/asignado produce un buy, lo respetamos de inmediato
+        if primary_fn is not None:
+            primary_signal = primary_fn(fx, regime)
+            if primary_signal.action == "buy":
+                return primary_signal
+
+        # Cascada de evaluación prioritaria cuando el primario no tiene ventaja (*_no_edge) o en modo auto
         if regime.name == "bullish_trend":
-            candidates = [
-                self._elder_triple_signal(fx, regime),
-                self._connors_rsi_signal(fx, regime)
+            cascade = [
+                self._active_momentum_signal,
+                self._trend_signal,
+                self._turtle_breakout_signal,
+                self._williams_alligator_signal,
+                self._elder_triple_signal,
+                self._connors_rsi_signal,
+                self._pullback_trend_signal,
             ]
         elif regime.name == "range":
-            candidates = [
-                self._mean_reversion_signal(fx, regime),
-                self._connors_rsi_signal(fx, regime)
+            cascade = [
+                self._mean_reversion_signal,
+                self._connors_rsi_signal,
+                self._active_momentum_signal,
+                self._turtle_breakout_signal,
             ]
         else:
-            candidates = [self._elder_triple_signal(fx, regime)]
+            rebound_allowed = (
+                regime.allow_long
+                or float(fx.get("close", 0)) > float(fx.get("ema_fast", 0))
+                or float(fx.get("macd_hist_slope", 0)) >= -0.0002
+                or float(fx.get("rsi", 50)) < 35.0
+            )
+            cascade = [
+                self._mean_reversion_signal,
+                self._connors_rsi_signal,
+            ]
+            if rebound_allowed:
+                cascade.extend([
+                    self._active_momentum_signal,
+                    self._elder_triple_signal,
+                    self._turtle_breakout_signal,
+                    self._williams_alligator_signal,
+                ])
 
-        return max(candidates, key=lambda signal: signal.confidence)
+        candidates = [fn(fx, regime) for fn in cascade]
+        buy_candidates = [sig for sig in candidates if sig.action == "buy"]
+        if buy_candidates:
+            return max(buy_candidates, key=lambda signal: signal.confidence)
+
+        max_confidence = max((s.confidence for s in candidates), default=0.0)
+        return Signal("hold", max_confidence, f"cascade_no_edge:{regime.name}")
 
     def generate_from_features(
         self,
@@ -538,8 +639,8 @@ class HybridStrategy:
                 reason = ",".join(blockers) if blockers else "quality"
                 return Signal("hold", quality, f"quality_block:{reason}:{regime.name}")
             if self.cfg.use_regime_filter and not regime.allow_long:
-                # Permitir compras de rebote por reversión a la media en sobreventa extrema
-                if entry.reason.startswith("mean_reversion") or "connors_rsi" in entry.reason:
+                # Permitir compras de rebote por reversión a la media o momentum activo
+                if entry.reason.startswith("mean_reversion") or "connors_rsi" in entry.reason or "active_momentum" in entry.reason:
                     pass
                 else:
                     return Signal("hold", confidence, f"regime_block:{regime.reason}")

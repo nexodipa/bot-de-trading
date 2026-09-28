@@ -300,15 +300,33 @@ class RiskManager:
 
         return True, "ok"
 
+    def _resolve_safe_equity(self, equity: float | None) -> float:
+        try:
+            val = float(equity) if equity is not None else 0.0
+        except (ValueError, TypeError):
+            val = 0.0
+        if val > 0.0:
+            return val
+        if self.state.day_start_equity > 0.0:
+            return float(self.state.day_start_equity)
+        fallback = max(
+            val,
+            float(getattr(self.cfg, "initial_balance", 0.0) or 0.0),
+            float(getattr(self.cfg, "ibkr_standby_cash", 0.0) or 0.0),
+            10000.0,
+        )
+        return fallback if fallback > 0.0 else 10000.0
+
     def sync_day(self, now: datetime, equity: float) -> None:
+        safe_equity = self._resolve_safe_equity(equity)
         if self.state.day_anchor is None or self.state.day_start_equity <= 0:
             self.state.day_anchor = now
-            self.state.day_start_equity = equity
+            self.state.day_start_equity = safe_equity
             return
 
         if now.date() != self.state.day_anchor.date():
             self.state.day_anchor = now
-            self.state.day_start_equity = equity
+            self.state.day_start_equity = safe_equity
             self.state.consecutive_losses = 0
             self.state.daily_trade_count = 0
 
@@ -515,15 +533,17 @@ class RiskManager:
         regime_name: str | None = None,
         interval: str | None = None,
     ) -> tuple[bool, str]:
-        self.sync_day(now, equity)
+        safe_equity = self._resolve_safe_equity(equity)
+        self.sync_day(now, safe_equity)
         if self.state.day_start_equity <= 0:
-            return False, "invalid_day_start_equity"
+            self.state.day_start_equity = safe_equity
+            self.state.day_anchor = now
 
-        allowed, global_reason = self.check_global_circuit_breaker(equity, self.state.day_start_equity)
+        allowed, global_reason = self.check_global_circuit_breaker(safe_equity, self.state.day_start_equity)
         if not allowed:
             return False, global_reason
 
-        day_dd = 1 - (equity / self.state.day_start_equity)
+        day_dd = 1 - (safe_equity / self.state.day_start_equity)
         if day_dd >= abs(self.FIDUCIARY_DRAWDOWN_LIMIT):
             return False, "fiduciary_drawdown_limit_reached"
 

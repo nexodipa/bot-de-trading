@@ -1,74 +1,69 @@
-# Project: Binance Square Autonomous Publisher & Growth Traffic Engine
+# Project: Quantitative Execution Force and Telegram Redesign
 
 ## Architecture
-- **Layer 1: Content Generation & Formatting Engine (`bot/growth_traffic_engine.py`, `bot/binance_square.py`)**:
-  Generates 3 institutional content archetypes:
-  1. Real-Time Quantitative Setup Alerts ($S_{composite} \ge 0.72$, Entry, TP1/2/3, SL, R:R $\ge 1:2.5$).
-  2. Daily Macro & Market Reports (BTC summary, Top gainers, FinBERT sentiment, institutional flow).
-  3. Audited Performance & Transparency Reports (Win Rate 78.5%, Profit Factor 2.65, -6.4% Drawdown lock, ledger verification).
-  Enforces clean Markdown, zero unsupported HTML tags (`<b>`, `<code>`, `<pre>`), strict length bounds (< 2,000 chars), and dual-pillar conversion CTAs (Telegram VIP `@AdminVIPSignals` + `/subscribe`, Institutional Web Portal `https://josuest-b.github.io/bot-de-trading/`).
-- **Layer 2: Resilient Transport, Rate Limiting & Audit Persistence (`bot/binance_square.py`, `bot/config.py`)**:
-  Encapsulates OpenAPI interaction with `X-Square-OpenAPI-Key` validation, jittered exponential backoff retries on HTTP 429/500/timeouts, hybrid sliding window + priority cooldown anti-spam rate limiter, atomic rate-limit state persistence in SQLite `bot_state`, and comprehensive audit event telemetry in SQLite `events` table (`bot_events.sqlite3`).
-- **Layer 3: Asynchronous Non-Blocking Execution & Live Loop Integration (`bot/main.py`, `bot/growth_traffic_engine.py`)**:
-  Decouples publishing from the 24/7 live trading loop via a thread-safe `queue.Queue` producer-consumer model and background daemon thread (`BinanceSquareWorker`). Replaces synchronous 15s blocking HTTP calls in `bot/main.py` with sub-millisecond enqueueing, preserving real-time tick execution and order safety.
-- **Layer 4: Verification, Adversarial Hardening & Forensic Audit Suite (`tests/test_binance_square_publisher.py`)**:
-  29-method core test suite + 28 adversarial tests covering archetype rendering, character bounds, HTML hygiene, CTA presence, high-fidelity HTTP mocks (200, 400, 401, 429, 500, timeouts), rate limiting, graceful degradation, and SQLite logging, ensuring zero regressions on the 246 existing tests.
+This project enhances the quantitative trading engines across two synchronized repositories:
+1. **Primary (`bot de trading`)**: 24/7 Binance spot trading engine with hybrid crypto/stock evaluation.
+2. **Secondary (`bot_ibkr_trading`)**: Interactive Brokers (IBKR) & yfinance equity execution engine (#MSFT, #AAPL, #NVDA, #TSLA, #META).
 
----
+### System Data & Control Flow
+- **Execution & Risk Layer**:
+  - `RiskManager.can_trade()` and `RiskManager.sync_day()` enforce capital preservation.
+  - Equity resolution now auto-initializes `day_start_equity` to safe fallback equity (`max(equity, cash, initial_balance, 10000.0)`) whenever equity is `<= 0.0` or unavailable during broker startup/standby, permanently eradicating `invalid_day_start_equity`.
+  - `load_optimal_config()` preserves existing `RiskManager` state instead of recreating it every step.
+- **Strategy & Signal Layer**:
+  - `HybridStrategy.generate()` evaluates indicators and market regime.
+  - Cascading Multi-Strategy Fallback: When the primary strategy returns `*_no_edge`, the engine cascades through alternative strategies and evaluates an **Active Momentum / Trend Continuation** trigger (`_active_momentum_signal`), entering on positive volume flow and trend momentum without freezing in `hold`.
+  - Auto-Tuning Immunity: `_build_autotune_grid()` and `load_optimal_config()` clamp thresholds (`min_entry_quality <= 0.55`, `min_confidence <= 0.50`) preventing auto-tuning from locking assets in passive modes.
+- **Telemetry & Communications Layer**:
+  - `AutoTrafficPublisher`: Scheduled cadence set to 720 minutes (12 hours / 2 times per day) emitting consolidated executive portfolio & market digests.
+  - Alert Dispatchers: Real-time Telegram alerts restricted strictly to actual order executions (`live_buy`, `live_sell`).
+  - Human Natural Language Formatter: Elimination of cryptic technical phrases (*"protocolo de protección"*, *"invalid_day_start_equity"*, *"Operaciones pausadas temporalmente"*). Inactivity is expressed purely in institutional Spanish market terms (*«se mantiene sin operar debido a [factor de mercado]»*).
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Quantitative Setup Alert Generator | Renders setups when $S_{composite} \ge 0.72$ with Entry, TP1, TP2, TP3, SL, and R:R $\ge 1:2.5$ | M1 | ORIGINAL_REQUEST §R1.1 |
-| 2 | Daily Macro & Market Report Generator | Renders BTC executive summary, Top Gainers ranking, FinBERT sentiment, and institutional thesis | M1 | ORIGINAL_REQUEST §R1.2 |
-| 3 | Audited Performance Report Generator | Renders Win Rate, Profit Factor, -6.4% Drawdown lock, and public ledger audit invitation | M1 | ORIGINAL_REQUEST §R1.3 |
-| 4 | Markdown Hygiene & HTML Stripper | Sanitizes text removing disallowed HTML tags while preserving mathematical inequalities (`< -6.4%`) | M1 | ORIGINAL_REQUEST §R2 |
-| 5 | Character Bounds & Truncation Guard | Enforces strict character limit (< 2,000 chars, target < 1,950 chars) without severing CTAs | M1 | ORIGINAL_REQUEST §R2 |
-| 6 | Institutional Conversion CTA Embedder | Injects `@AdminVIPSignals`, `/subscribe`, and Web Portal URL + strategic hashtags in every post | M1 | ORIGINAL_REQUEST §R2 |
-| 7 | OpenAPI Request & Key Validation | Formats JSON payload `{"bodyTextOnly": text}` with headers `X-Square-OpenAPI-Key` & `clienttype` | M2 | ORIGINAL_REQUEST §R2, §R3 |
-| 8 | Resilient Network Retries with Backoff | Retries on HTTP 429/500/502/timeouts with exponential backoff and jitter | M2 | ORIGINAL_REQUEST §AC4 |
-| 9 | Graceful Degradation / Standby Mode | Safe dry-run / simulation mode when API key is missing or `BINANCE_SQUARE_ENABLED=false` | M2 | ORIGINAL_REQUEST §AC5 |
-| 10 | Sliding Window & Priority Rate Limiter | Enforces hourly limits (max 5/h), cooldowns (15m standard, 3m for setups), and content deduplication | M2 | ORIGINAL_REQUEST §R3 |
-| 11 | SQLite State & Telemetry Persistence | Logs published, failed, throttled, and simulated posts to `events` table in `bot_events.sqlite3` | M2 | ORIGINAL_REQUEST §R3 |
-| 12 | Configuration Expansion | Adds `BINANCE_SQUARE_POST_INTERVAL_HOURS`, `RATE_LIMIT`, `MIN_COOLDOWN`, `MIN_SCORE`, `DRY_RUN` | M2 | Explorer 3 Report |
-| 13 | Asynchronous Producer-Consumer Queue | Thread-safe `queue.Queue` eliminates 15s blocking calls in the live trading loop | M3 | ORIGINAL_REQUEST §R3 |
-| 14 | Background Daemon Worker | `BinanceSquareWorker` drains queue and handles dual-cadence scheduling (periodic + immediate) | M3 | ORIGINAL_REQUEST §R3 |
-| 15 | Live Loop Non-Blocking Signal Hook | Enqueues high-conviction signals ($S_{composite} \ge 0.72$) in `bot/main.py` in < 0.001 ms | M3 | ORIGINAL_REQUEST §R1.1, §R3 |
-| 16 | E2E & Unit Verification Suite | 29 test cases in `tests/test_binance_square_publisher.py` with mock network and isolated SQLite | E2E | ORIGINAL_REQUEST §AC6 |
-| 17 | Zero-Regression Verification Gate | Verifies 100% pass of existing 246 baseline tests + new tests; Reviewer, Challenger, and Audit | M4 | ORIGINAL_REQUEST §AC7 |
-
----
+| 1 | Equity Auto-Init & Elimination of `invalid_day_start_equity` | Auto-initialize `day_start_equity` with safe fallback in `bot/risk.py` and `bot/main.py` in both repos; preserve risk state in `load_optimal_config` | M1 | Survey (E1, E2, E3) |
+| 2 | Active Momentum / Trend Continuation Trigger | Add `_active_momentum_signal` in `bot/strategy.py` evaluating positive trend continuation, RSI 46-78, volume flow | M2 | Survey (E2) |
+| 3 | Cascading Multi-Strategy Fallback Engine | Evaluate alternative strategies when assigned strategy returns `*_no_edge` instead of locking into `hold` | M2 | Survey (E2) |
+| 4 | Auto-Tuning Safe Immunity & Threshold Clamping | Clamp `min_entry_quality` (<=0.55) and `min_confidence` (<=0.50) in `_build_autotune_grid` and `load_optimal_config` | M2 | Survey (E2) |
+| 5 | Strict 12-Hour Executive Telegram Digests | Configure `AutoTrafficPublisher` for 720 min (12h) interval with consolidated executive digest | M3 | Survey (E3) |
+| 6 | Real Executions Only in Telegram Alert Dispatch | Restrict real-time Telegram alerts to `live_buy` and `live_sell`, completely suppressing individual `risk_pause` / `live_guard` alerts | M3 | Survey (E3) |
+| 7 | Human Natural Language Inactivity Formatter | Eradicate cryptic pause jargon; translate no-trade factors into professional Spanish market explanations | M3 | Survey (E3) |
+| 8 | Multi-Repo Stock Synchronization (#MSFT) | Ensure `bot_ibkr_trading` runs clean without `#MSFT` pause alerts under broker standby or zero balance | M4 | Survey (E1, E3) |
+| 9 | 100% Comprehensive Test Suite & Zero Regressions | Unit, integration, and E2E verification across both repos with >=304 tests in primary and >=89 tests in secondary | M5 | Survey (E1, E2, E3) |
 
 ## Milestones
-
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| E2E | E2E Testing Track | Implement comprehensive test suite in `tests/test_binance_square_publisher.py` covering archetypes, limits, CTAs, mocks, degradation, rate limiting, and SQLite | none | DONE |
-| M1 | Dynamic Multi-Format Content Generator | Features 1, 2, 3, 4, 5, 6: `bot/growth_traffic_engine.py`, `bot/binance_square.py` (3 archetypes, variables, Markdown sanitization, length bounds, CTAs, hashtags) | none | DONE |
-| M2 | Resilient Client, Rate Limiter & SQLite Telemetry | Features 7, 8, 9, 10, 11, 12: `bot/binance_square.py`, `bot/config.py`, `.env.example` (API key validation, retries, rate limiting, SQLite events & state) | M1 | DONE |
-| M3 | Asynchronous Queue Worker & Live Loop Integration | Features 13, 14, 15: `bot/growth_traffic_engine.py`, `bot/main.py` (`queue.Queue` worker, dual-cadence scheduler, live loop non-blocking hook) | M2 | DONE |
-| M4 | Full Verification, Review, Challenger & Forensic Audit | Feature 17: Pass all E2E tests, verify 0 regressions on 246 tests, Reviewer APPROVE, Challenger verified, Forensic Auditor CLEAN | E2E, M3 | DONE |
+| M1 | Equity Auto-Init & Risk Unblock | `bot/risk.py`, `bot/main.py` in `bot de trading` and `bot_ibkr_trading` | none | DONE (worker_m1, approved by reviewer_m1_1 and reviewer_m1_2) |
+| M2 | Proactive Multi-Strategy & Active Momentum & Auto-Tuning Immunity | `bot/strategy.py`, `bot/main.py`, `.env` in both repos | M1 | DONE (worker_m2, approved by reviewer_m2_1 and reviewer_m2_2) |
+| M3 | Telegram Redesign & Human Inactivity Engine | `bot/growth_traffic_engine.py`, `bot/telemetry.py`, `bot/main.py` in both repos | M1 | DONE (worker_m3, approved by reviewer_m3_1 and reviewer_m3_2) |
+| M4 | IBKR Stock Synchronization & #MSFT Verification | Full verification and background event cleanup in `bot_ibkr_trading` | M1, M2, M3 | DONE (worker_m4_gen2) |
+| M5 | Test Suite Execution & Final Forensic Verification | Full test suite execution, adversarial challenge, and forensic audit across both repos | M1, M2, M3, M4 | DONE (approved by challenger_final, audited CLEAN by auditor_final) |
 
----
+## Interface Contracts
+### `bot/risk.py` ↔ `bot/main.py` (`RiskManager`)
+- Method: `can_trade(now: datetime, equity: float) -> tuple[bool, str]`
+  - Contract: When `equity <= 0.0` or unavailable, auto-initialize `self.state.day_start_equity` to `max(equity, fallback_equity, 10000.0)`. Never return `(False, "invalid_day_start_equity")`. Always allow trade evaluation if no genuine drawdown limit breached.
+- Method: `sync_day(now: datetime, equity: float) -> None`
+  - Contract: Preserve previous day start equity or resolve positive safe floor if incoming `equity <= 0.0`.
+
+### `bot/strategy.py` ↔ `bot/main.py` (`HybridStrategy`)
+- Method: `generate_from_features(fx: dict, regime: MarketRegime) -> Signal`
+  - Contract: When assigned mode returns `*_no_edge`, invoke cascading evaluation over available strategies + `_active_momentum_signal(fx, regime)`. Only return `hold` if all strategies reject entry.
+
+### `bot/main.py` ↔ Telegram Telemetry
+- Real-time alert filter: `if event_name in {"live_buy", "live_sell", "ibkr_buy", "ibkr_sell"}: telemetry.alert(...)`
+- Formatting function: `_format_live_alert(symbol: str, event: dict) -> str`
+  - Contract: Zero occurrences of `"protocolo de protección"`, `"invalid_day_start_equity"`, `"Operaciones pausadas temporalmente"`. Inactivity reasons formatted via `translate_inactivity_reason(reason)`.
 
 ## Code Layout
-- `bot/binance_square.py`:
-  * `BinanceSquarePublisher`: Core client with OpenAPI payload formatting, key validation, retries, rate-limiting, and SQLite `events` logging.
-  * `SquareRateLimiter`: Sliding window and cooldown limiter with SQLite `bot_state` persistence and content deduplication.
-  * `sanitize_for_square()`: Markdown hygiene and HTML stripping utility enforcing `< 2,000` chars and preserving mathematical inequalities.
-  * `BinanceSquareContentGenerator`: Renders Archetype 1 (Quantitative Setups), Archetype 2 (Daily Macro), and Archetype 3 (Audited Performance).
-- `bot/growth_traffic_engine.py`:
-  * `BinanceSquareWorker`: Daemon thread processing queued posts and managing scheduled cadences.
-  * `enqueue_square_post()`: Non-blocking enqueueing function (< 0.001 ms).
-  * `AutoTrafficPublisher`: Growth engine managing dual-channel traffic (Telegram + Binance Square).
-- `bot/config.py`:
-  * Extended `BotConfig` with `binance_square_post_interval_hours`, `binance_square_rate_limit_per_hour`, `binance_square_min_cooldown_minutes`, `binance_square_min_score`, `binance_square_dry_run`.
-- `bot/main.py`:
-  * Non-blocking signal enqueueing in `run_live_loop` and `_publish_live_event_to_square`.
-  * Asynchronous dispatch in `run_auto_tune_cycle`.
-- `tests/test_binance_square_publisher.py`:
-  * Comprehensive core test suite containing 7 test classes and 29 methods.
-- `tests/test_adversarial_binance_square_challenger_1.py`:
-  * Adversarial stress testing for bounds, HTML stripping, rate limits (14 methods).
-- `tests/test_challenger_binance_square.py`:
-  * Empirical fault injection and concurrency testing (14 methods).
+- `C:\Users\USUARIO\bot de trading`:
+  - `bot/risk.py`: Risk management, equity tracking, circuit breaker.
+  - `bot/strategy.py`: Technical indicators, market regimes, entry signals, active momentum.
+  - `bot/main.py`: LiveTrader, auto-tuning grid, telemetry dispatch, alert formatters.
+  - `bot/growth_traffic_engine.py`: AutoTrafficPublisher (12h digest loop).
+  - `bot/telemetry.py`: TelegramNotifier, HTML sanitization.
+  - `tests/`: Primary unit and integration test suite.
+- `C:\Users\USUARIO\bot_ibkr_trading`:
+  - Symmetrical files for IBKR equities execution: `bot/risk.py`, `bot/strategy.py`, `bot/main.py`, `bot/growth_traffic_engine.py`, `bot/telemetry.py`, `tests/`.

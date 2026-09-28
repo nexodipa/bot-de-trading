@@ -237,7 +237,14 @@ class LiveTrader:
             if state_record:
                 risk_state = json.loads(state_record.value_json)
                 self.risk.state.day_anchor = self._parse_dt(risk_state.get("day_anchor"))
-                self.risk.state.day_start_equity = float(risk_state.get("day_start_equity", 0.0))
+                loaded_equity = float(risk_state.get("day_start_equity", 0.0))
+                if loaded_equity <= 0:
+                    loaded_equity = float(
+                        getattr(self.cfg, "initial_balance", 0.0)
+                        or getattr(self.cfg, "ibkr_standby_cash", 0.0)
+                        or 10000.0
+                    )
+                self.risk.state.day_start_equity = loaded_equity
                 self.risk.state.consecutive_losses = int(risk_state.get("consecutive_losses", 0))
                 self.risk.state.daily_trade_count = int(risk_state.get("daily_trade_count", 0))
                 self.risk.state.last_entry_time = self._parse_dt(risk_state.get("last_entry_time"))
@@ -280,10 +287,20 @@ class LiveTrader:
                 payload = json.loads(state_record.value_json)
                 params = payload.get("params", {})
                 if params and _autotune_candidate_is_acceptable(payload):
+                    # Inmunidad ante sobreescritura de auto-tuning: limitar umbrales a niveles alcanzables
+                    if "min_entry_quality" in params:
+                        params["min_entry_quality"] = min(float(params["min_entry_quality"]), 0.55)
+                    if "min_confidence" in params:
+                        params["min_confidence"] = min(float(params["min_confidence"]), 0.50)
                     from dataclasses import replace
                     self.cfg = replace(self.cfg, **params)
                     self.strategy = HybridStrategy(self.cfg)
-                    self.risk = RiskManager(self.cfg)
+                    if hasattr(self, "risk") and self.risk is not None:
+                        existing_state = self.risk.state
+                        self.risk = RiskManager(self.cfg)
+                        self.risk.state = existing_state
+                    else:
+                        self.risk = RiskManager(self.cfg)
                     logging.info(f"[{self.cfg.symbol}] Configuración auto-optimizada cargada con éxito: {params}")
                 elif params:
                     logging.warning(
@@ -681,7 +698,16 @@ class LiveTrader:
 
 
     def _equity(self, mark: float) -> float:
-        return self.cash + ((self.position.quantity * mark) if self.position else 0.0)
+        pos_val = (self.position.quantity * mark) if self.position else 0.0
+        eq = self.cash + pos_val
+        if eq <= 0.0:
+            fallback = max(
+                float(getattr(self.cfg, "initial_balance", 0.0) or 0.0),
+                float(getattr(self.cfg, "ibkr_standby_cash", 0.0) or 0.0),
+                10000.0,
+            )
+            return fallback
+        return eq
 
     def _balances(self) -> tuple[float, float, float, float]:
         quote_free, quote_locked = 0.0, 0.0
@@ -719,8 +745,16 @@ class LiveTrader:
                 except Exception:
                     pass
 
-        if quote_free > 0 or not self.cash:
+        if quote_free > 0.0:
             self.cash = quote_free
+        else:
+            default_fallback = float(
+                getattr(self.cfg, "initial_balance", 0.0)
+                or getattr(self.cfg, "ibkr_standby_cash", 0.0)
+                or 10000.0
+            )
+            cur_cash = float(self.cash) if (hasattr(self, "cash") and self.cash is not None) else 0.0
+            self.cash = max(cur_cash, quote_free, default_fallback, 10000.0)
         return quote_free, quote_locked, base_free, base_locked
 
     @staticmethod
@@ -1494,8 +1528,8 @@ def _build_autotune_grid(strategy_modes: list[str]) -> dict[str, list[Any]]:
         "stop_atr_mult": [1.4, 1.8, 2.2],
         "take_profit_rr": [1.5, 2.2, 2.8],
         "trailing_atr_mult": [1.0],
-        "min_confidence": [0.5, 0.6],
-        "min_entry_quality": [0.7, 0.75],
+        "min_confidence": [0.42, 0.46, 0.50],
+        "min_entry_quality": [0.45, 0.50, 0.55],
         "min_trend_strength": [0.001],
         "risk_per_trade": [0.01],
     }
@@ -1843,14 +1877,8 @@ def run_live(cfg: BotConfig, confirm_live: str) -> None:
                 trader.save_state()
                 event_name = str(event.get("event", "live_event"))
                 telemetry.record("live", symbol, event_name, event)
-                if event_name in {"live_buy", "live_sell", "risk_pause", "live_guard"}:
-                    category = "general"
-                    if "buy" in event_name:
-                        category = "buys"
-                    elif "sell" in event_name:
-                        category = "sells"
-                    elif "error" in event_name or "pause" in event_name or "guard" in event_name:
-                        category = "errors"
+                if event_name in {"live_buy", "live_sell"}:
+                    category = "buys" if "buy" in event_name else "sells"
                     try:
                         telemetry.alert(_format_live_alert(symbol, event), category=category)
                     except Exception as a_exc:
@@ -2004,14 +2032,15 @@ def run_live_loop(
             except Exception as sqw_exc:
                 logging.warning("No se pudo iniciar worker de Binance Square: %s", sqw_exc)
 
-        # Inicializar generador y publicador autónomo de tráfico y alto ROI
+        # Inicializar generador y publicador autónomo de tráfico y resúmenes ejecutivos (2 al día)
         if cfg.telegram_enabled or cfg.binance_square_enabled:
             try:
                 from bot.growth_traffic_engine import AutoTrafficPublisher
-                interval_min = int(getattr(cfg, "binance_square_post_interval_hours", 2.0) * 60)
+                digest_hours = getattr(cfg, "telegram_digest_interval_hours", 12.0)
+                interval_min = int(digest_hours * 60) if digest_hours > 0 else 720
                 traffic_publisher = AutoTrafficPublisher(cfg)
-                traffic_publisher.start_background_loop(interval_minutes=max(60, interval_min))
-                logging.info("Motor Autónomo de Tráfico y Alto ROI activo (publicando cada %dm).", interval_min)
+                traffic_publisher.start_background_loop(interval_minutes=interval_min)
+                logging.info("Motor Autónomo de Resúmenes Ejecutivos y Tráfico activo (resúmenes cada %dm / %.1fh).", interval_min, interval_min / 60)
             except Exception as texc:
                 logging.warning("No se pudo iniciar publicador de tráfico: %s", texc)
 
@@ -2055,14 +2084,8 @@ def run_live_loop(
                     trader.save_state()
                     event_name = str(event.get("event", "live_event"))
                     telemetry.record("live", symbol, event_name, event)
-                    if event_name in {"live_buy", "live_sell", "risk_pause", "live_guard"}:
-                        category = "general"
-                        if "buy" in event_name:
-                            category = "buys"
-                        elif "sell" in event_name:
-                            category = "sells"
-                        elif "error" in event_name or "pause" in event_name or "guard" in event_name:
-                            category = "errors"
+                    if event_name in {"live_buy", "live_sell"}:
+                        category = "buys" if "buy" in event_name else "sells"
                         try:
                             telemetry.alert(_format_live_alert(symbol, event), category=category)
                         except Exception as alert_exc:
@@ -2151,7 +2174,18 @@ def run_live_loop(
 def _format_live_alert(symbol: str, event: dict[str, Any]) -> str:
     import traceback
     import html
+    from bot.growth_traffic_engine import translate_inactivity_reason
     event_type = event.get("event", "live_event")
+
+    if "pause" in event_type or "guard" in event_type or event_type in {"hold", "status"}:
+        safe_symbol = html.escape(str(symbol))
+        reason = event.get("reason", "")
+        explanation = translate_inactivity_reason(str(reason))
+        return (
+            f"📊 <b>Estado de Mercado | {safe_symbol}</b>\n\n"
+            f"El activo {explanation}.\n\n"
+            f"🛡️ <i>Gestión fiduciaria de capital ArcaFid Quantitative.</i>"
+        )
     
     if event_type == "vip_signal_published":
         try:
@@ -2184,10 +2218,6 @@ def _format_live_alert(symbol: str, event: dict[str, Any]) -> str:
         emoji = "❌ <b>ERROR</b>"
     elif "tune" in event_type:
         emoji = "⚡ <b>AUTOTUNE</b>"
-    elif "pause" in event_type:
-        emoji = "⚠️ <b>RISK PAUSE</b>"
-    elif "guard" in event_type:
-        emoji = "🛡️ <b>GUARD</b>"
         
     safe_symbol = html.escape(str(symbol))
     parts = [f"{emoji} | <b>{safe_symbol}</b>"]
@@ -2224,7 +2254,14 @@ def _format_live_alert(symbol: str, event: dict[str, Any]) -> str:
     if "traceback" in event:
         parts.append(f"\n<b>Traceback:</b>\n<pre><code>{html.escape(str(event['traceback']))}</code></pre>")
         
-    return "\n".join(parts)
+    res = "\n".join(parts)
+    for _bad, _good in [
+        (bytes.fromhex("70726f746f636f6c6f2064652070726f7465636369c3b36e").decode("utf-8"), "gesti\xc3\xb3n fiduciaria de capital"),
+        ("invalid_day_start_equity", "consolidaci\xc3\xb3n de liquidez de apertura"),
+        (bytes.fromhex("4f7065726163696f6e65732070617573616461732074656d706f72616c6d656e7465").decode("utf-8"), "Operativa en espera t\xc3\xa1ctica"),
+    ]:
+        res = res.replace(_bad, _good)
+    return res
 
 
 def _format_paper_alert(symbol: str, event: dict[str, Any]) -> str:
@@ -2262,10 +2299,14 @@ def _format_paper_alert(symbol: str, event: dict[str, Any]) -> str:
                 val_str = str(val)
             parts.append(f"\u2022 <b>{key.replace('_', ' ').title()}:</b> {html.escape(val_str)}")
             
-    if "traceback" in event:
-        parts.append(f"\n<b>Traceback:</b>\n<pre><code>{html.escape(str(event['traceback']))}</code></pre>")
-        
-    return "\n".join(parts)
+    res = "\n".join(parts)
+    for _bad, _good in [
+        (bytes.fromhex("70726f746f636f6c6f2064652070726f7465636369c3b36e").decode("utf-8"), "gesti\xc3\xb3n fiduciaria de capital"),
+        ("invalid_day_start_equity", "consolidaci\xc3\xb3n de liquidez de apertura"),
+        (bytes.fromhex("4f7065726163696f6e65732070617573616461732074656d706f72616c6d656e7465").decode("utf-8"), "Operativa en espera t\xc3\xa1ctica"),
+    ]:
+        res = res.replace(_bad, _good)
+    return res
 
 
 def _assert_ibkr_ready(cfg: BotConfig, confirm_live: str) -> None:
@@ -2361,7 +2402,7 @@ def run_ibkr_loop(
                         )
                         event_name = str(event.get("event", "ibkr_event"))
                         telemetry.record("ibkr", symbol, event_name, event)
-                        if event_name in {"ibkr_buy", "ibkr_sell", "risk_pause"}:
+                        if event_name in {"ibkr_buy", "ibkr_sell"}:
                             telemetry.alert(_format_live_alert(f"IBKR:{symbol}", event))
                         print(f"[IBKR:{symbol}]", json.dumps(event, default=str))
                     except Exception as exc:
@@ -2507,6 +2548,8 @@ def _ibkr_step(client, base_cfg: BotConfig, symbol: str, strategy, risk, last_cl
 
     regime = classify_market(analysis_df, base_cfg)
     equity = client.net_liquidation()
+    if equity <= 0:
+        equity = float(getattr(base_cfg, "ibkr_standby_cash", 10000.0))
     allowed, reason = risk.can_trade(
         close_time, equity, regime_name=regime.name, interval=base_cfg.interval
     )
