@@ -178,7 +178,7 @@ class BinanceSquareContentGenerator:
 
         raw_post = (
             f"Análisis y oportunidad en #{symbol} (Gráfico de {timeframe})\n\n"
-            f"Comparto el escenario que estamos operando desde la mesa de ArcaFid Quantitative. "
+            f"Comparto el escenario que estamos operando desde la mesa de Proyecto Fehu (ᚠ) Quantitative (ArcaFid). "
             f"Detectamos una configuración de compra ({action_display}) muy limpia con relación Riesgo/Beneficio de 1:{rr:.2f} "
             f"y convicción estadística de {score_str} en nuestro modelo.\n\n"
             f"Niveles clave de la operación:\n"
@@ -258,7 +258,7 @@ class BinanceSquareContentGenerator:
     ) -> str:
         """Genera informe de resultados auditados con redacción clara, honesta y profesional."""
         raw_post = (
-            f"Transparencia y resultados en la gestión de ArcaFid Quantitative\n\n"
+            f"Transparencia y resultados en la gestión de Proyecto Fehu (ᚠ) Quantitative (ArcaFid)\n\n"
             f"En el trading profesional, cuidar el capital y mantener una estadística consistente vale mucho más que cualquier promesa. "
             f"Compartimos el balance auditado de nuestra operativa hasta la fecha:\n\n"
             f"• Tasa de acierto (Win Rate): {win_rate_pct:.1f}%\n"

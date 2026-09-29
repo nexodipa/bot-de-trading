@@ -2184,7 +2184,7 @@ def _format_live_alert(symbol: str, event: dict[str, Any]) -> str:
         return (
             f"📊 <b>Estado de Mercado | {safe_symbol}</b>\n\n"
             f"El activo {explanation}.\n\n"
-            f"🛡️ <i>Gestión fiduciaria de capital ArcaFid Quantitative.</i>"
+            f"🛡️ <i>Gestión fiduciaria de capital Proyecto Fehu (ᚠ) Quantitative.</i>"
         )
     
     if event_type == "vip_signal_published":
@@ -2635,7 +2635,7 @@ def run_hybrid_loop(
     - US_POST_MARKET & US_CLOSED: Keeps equity state and continues 24/7 crypto scanning.
     """
     telemetry = build_telemetry(cfg)
-    telemetry.alert("<b>ArcaFid Quantitative</b>: Hybrid Portfolio Loop Iniciado (14 Activos: 8 Cripto + 6 Acciones/ETFs)")
+    telemetry.alert("<b>Proyecto Fehu (ᚠ) Quantitative</b>: Hybrid Portfolio Loop Iniciado (14 Activos: 8 Cripto + 6 Acciones/ETFs)")
 
     # 1. Initialize crypto traders
     crypto_traders: dict[str, LiveTrader] = {}
