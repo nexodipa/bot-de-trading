@@ -496,6 +496,21 @@ class BinanceSquarePublisher:
         # 3. Sanitizar texto y armar payload compatible con OpenAPI
         clean_text = sanitize_for_square(text)
 
+        # Limitar número total de hashtags a 3 para cumplir con la regla estricta de Binance Square OpenAPI (error 220094)
+        matches = list(re.finditer(r"#([a-zA-Z0-9_]+)", clean_text))
+        if len(matches) > 3:
+            out_parts: list[str] = []
+            last_idx = 0
+            for i, m in enumerate(matches):
+                out_parts.append(clean_text[last_idx:m.start()])
+                if i < 3:
+                    out_parts.append(m.group(0))
+                else:
+                    out_parts.append(m.group(1))
+                last_idx = m.end()
+            out_parts.append(clean_text[last_idx:])
+            clean_text = "".join(out_parts)
+
         headers = {
             "X-Square-OpenAPI-Key": self.api_key,
             "Content-Type": "application/json",
