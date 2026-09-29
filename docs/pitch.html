@@ -47,6 +47,9 @@
       <button onclick="switchTab('fees')" id="tab-fees" class="py-3.5 px-2 font-medium border-b-2 border-transparent text-zinc-400 hover:text-white transition-colors whitespace-nowrap">
         🤝 Honorarios 100% a Éxito (0% Gestión)
       </button>
+      <button onclick="switchTab('infographic')" id="tab-infographic" class="py-3.5 px-2 font-medium border-b-2 border-transparent text-zinc-400 hover:text-white transition-colors whitespace-nowrap">
+        🖼️ Infografía Oficial (ᚠ)
+      </button>
     </div>
 
     <!-- TAB 1: SEGURIDAD (LO QUE SOMOS VS LO QUE NO HACEMOS) -->
@@ -232,6 +235,24 @@
       </div>
     </div>
 
+    <!-- TAB 4: INFOGRAFÍA OFICIAL PROYECTO FEHU -->
+    <div id="content-infographic" class="p-6 sm:p-8 space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h3 class="text-lg font-bold text-white">Infografía Oficial: Proyecto Fehu (ᚠ)</h3>
+          <p class="text-xs sm:text-sm text-zinc-400">Material visual fiduciario listo para distribución a inversores institucionales y privados.</p>
+        </div>
+        <a href="fehu_infographic.jpg" download="Proyecto_Fehu_Infografia_Inversores.jpg" class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-colors shadow-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+          Descargar Infografía HD
+        </a>
+      </div>
+
+      <div class="rounded-2xl overflow-hidden border border-white/10 bg-black/40 flex justify-center p-2 sm:p-4">
+        <img src="fehu_infographic.jpg" alt="Proyecto Fehu Infografía Oficial" class="max-w-full h-auto rounded-xl shadow-2xl object-contain max-h-[720px]">
+      </div>
+    </div>
+
     <!-- Footer Action Bar -->
     <div class="p-6 border-t border-white/10 bg-[#14161b] flex flex-col sm:flex-row items-center justify-between gap-4">
       <div class="text-xs text-zinc-400 text-center sm:text-left">
@@ -251,7 +272,7 @@
 
   <script>
     function switchTab(tabId) {
-      ['trust', 'simulator', 'fees'].forEach(id => {
+      ['trust', 'simulator', 'fees', 'infographic'].forEach(id => {
         const btn = document.getElementById('tab-' + id);
         const content = document.getElementById('content-' + id);
         if (id === tabId) {
