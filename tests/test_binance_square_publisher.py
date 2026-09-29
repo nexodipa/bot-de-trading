@@ -98,7 +98,7 @@ class TestPostArchetypeRendering(unittest.TestCase):
         # Invariant 5: Conversion CTAs & tags present
         self.assertIn("@AdminVIPSignals", post)
         self.assertIn("/subscribe", post)
-        self.assertIn("https://josuest-b.github.io/bot-de-trading/", post)
+        self.assertIn("https://nexodipa.github.io/bot-de-trading/", post)
         self.assertIn("#BinanceSquare", post)
         self.assertIn("#TradingCuantitativo", post)
 
@@ -138,7 +138,7 @@ class TestPostArchetypeRendering(unittest.TestCase):
         # Invariant 4: Mandatory CTAs & hashtags present
         self.assertIn("@AdminVIPSignals", post)
         self.assertIn("/subscribe", post)
-        self.assertIn("https://josuest-b.github.io/bot-de-trading/", post)
+        self.assertIn("https://nexodipa.github.io/bot-de-trading/", post)
         self.assertIn("#Bitcoin", post)
         self.assertIn("#BinanceSquare", post)
 
@@ -169,7 +169,7 @@ class TestPostArchetypeRendering(unittest.TestCase):
         # Invariant 3: Conversion CTAs & hashtags present
         self.assertIn("@AdminVIPSignals", post)
         self.assertIn("/subscribe", post)
-        self.assertIn("https://josuest-b.github.io/bot-de-trading/", post)
+        self.assertIn("https://nexodipa.github.io/bot-de-trading/", post)
         self.assertIn("#ArcaFid", post)
         self.assertIn("#BinanceSquare", post)
 
@@ -262,7 +262,7 @@ class TestContentFormattingAndLimits(unittest.TestCase):
         for idx, post in enumerate([p1, p2, p3], start=1):
             self.assertIn("@AdminVIPSignals", post, f"Telegram VIP handle missing in Archetype {idx}")
             self.assertIn("/subscribe", post, f"Telegram command /subscribe missing in Archetype {idx}")
-            self.assertIn("https://josuest-b.github.io/bot-de-trading/", post, f"Web portal link missing in Archetype {idx}")
+            self.assertIn("https://nexodipa.github.io/bot-de-trading/", post, f"Web portal link missing in Archetype {idx}")
 
     def test_strategic_hashtags_present(self) -> None:
         """All posts must include the 5 strategic hashtags for algorithmic reach."""
@@ -290,13 +290,13 @@ class TestContentFormattingAndLimits(unittest.TestCase):
         huge_text = (
             "Análisis cuantitativo de alta frecuencia con algoritmos de optimización. " * 80
             + "\n\n📲 Canal VIP & Señales Cuantitativas: @AdminVIPSignals (Comando /subscribe)"
-            + "\n🏛️ Portal Institucional & Simulador Actuarial: https://josuest-b.github.io/bot-de-trading/"
+            + "\n🏛️ Portal Institucional & Simulador Actuarial: https://nexodipa.github.io/bot-de-trading/"
             + "\n#BinanceSquare #TradingCuantitativo #Bitcoin #CryptoTrading #ArcaFid"
         )
         sanitized = cleaner(huge_text, max_chars=1950)
         self.assertLessEqual(len(sanitized), 1950)
         self.assertIn("@AdminVIPSignals", sanitized)
-        self.assertIn("https://josuest-b.github.io/bot-de-trading/", sanitized)
+        self.assertIn("https://nexodipa.github.io/bot-de-trading/", sanitized)
 
 
 class TestOpenAPINetworkMocking(unittest.TestCase):

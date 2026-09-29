@@ -464,7 +464,7 @@ class AutoTrafficPublisher:
             monitored_text,
             "",
             "🛡️ <i>Ejecución algorítmica 24/7 sin custodia. Disciplina actuarial y preservación de capital.</i>",
-            "🌐 <i>Portal Institucional: https://josuest-b.github.io/bot-de-trading/</i>",
+            "🌐 <i>Portal Institucional: https://nexodipa.github.io/bot-de-trading/</i>",
         ]
 
         msg = "\n".join(lines)

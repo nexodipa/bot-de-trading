@@ -49,7 +49,7 @@ class TestAdversarialExtremeTextSizes(unittest.TestCase):
         # Mandatory conversion CTAs must survive truncation
         self.assertIn("@AdminVIPSignals", post, "Telegram handle lost in truncation")
         self.assertIn("/subscribe", post, "Telegram command lost in truncation")
-        self.assertIn("https://josuest-b.github.io/bot-de-trading/", post, "Web portal URL lost in truncation")
+        self.assertIn("https://nexodipa.github.io/bot-de-trading/", post, "Web portal URL lost in truncation")
         self.assertIn("#BinanceSquare", post, "Strategic hashtag lost in truncation")
 
     def test_massive_macro_report_gainers_overflow(self) -> None:
@@ -71,7 +71,7 @@ class TestAdversarialExtremeTextSizes(unittest.TestCase):
 
         self.assertLessEqual(len(post), 1950)
         self.assertIn("@AdminVIPSignals", post)
-        self.assertIn("https://josuest-b.github.io/bot-de-trading/", post)
+        self.assertIn("https://nexodipa.github.io/bot-de-trading/", post)
 
     def test_raw_sanitizer_arbitrary_unstructured_overflow(self) -> None:
         """Arbitrary string of 100,000 continuous characters without spaces or markers."""
@@ -86,7 +86,7 @@ class TestAdversarialExtremeTextSizes(unittest.TestCase):
             "Encabezado de prueba.\n\n"
             + "📲 Canal VIP & Señales Cuantitativas: @AdminVIPSignals (Comando /subscribe) "
             + ("DETALLES ADICIONALES " * 200)
-            + "\n🏛️ Portal Institucional & Simulador Actuarial: https://josuest-b.github.io/bot-de-trading/"
+            + "\n🏛️ Portal Institucional & Simulador Actuarial: https://nexodipa.github.io/bot-de-trading/"
             + "\n#BinanceSquare"
         )
         sanitized = sanitize_for_square(huge_footer_text, max_chars=1950)

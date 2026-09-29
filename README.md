@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Proprietary / Institutional](https://img.shields.io/badge/license-Institutional-navy.svg)](#licencia)
-| [Live Demo (GitHub Pages)](https://josuest-b.github.io/bot-de-trading/) |
+| [Live Demo (GitHub Pages)](https://nexodipa.github.io/bot-de-trading/) |
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-ProsusAI%2Ffinbert-yellow.svg)](https://huggingface.co/ProsusAI/finbert)
 [![Compliance: SOC 2 Type II / ISO 27001](https://img.shields.io/badge/compliance-SOC%202%20%7C%20ISO%2027001-emerald.svg)](#cumplimiento-y-seguridad)
 [![Tests Passing](https://img.shields.io/badge/tests-246%2F246%20passing-brightgreen.svg)](#verificación-y-tests)
@@ -186,7 +186,7 @@ La plataforma incluye dos interfaces web integradas ejecutadas sobre HTTP multih
 ### 2. Clonación e Instalación de Dependencias
 
 `ash
-git clone https://github.com/JosueST-B/bot-de-trading.git
+git clone https://github.com/nexodipa/bot-de-trading.git
 cd bot-de-trading
 
 # Crear y activar entorno virtual

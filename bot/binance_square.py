@@ -75,6 +75,7 @@ def sanitize_for_square(text: str, max_chars: int = 1950) -> str:
         "/subscribe",
         "🏛️ Simulador",
         "🏛️ Portal Institucional",
+        "https://nexodipa.github.io/bot-de-trading/",
         "https://josuest-b.github.io/bot-de-trading/",
         "#BinanceSquare",
     ]
@@ -122,7 +123,7 @@ class BinanceSquareContentGenerator:
 
     MAX_CHARS: int = 1950
     CTA_TELEGRAM: str = "📲 Canal VIP y consultas en Telegram: @AdminVIPSignals (escribe /subscribe)"
-    CTA_PORTAL: str = "🏛️ Portal Institucional y simulador en vivo: https://josuest-b.github.io/bot-de-trading/"
+    CTA_PORTAL: str = "🏛️ Portal Institucional y simulador en vivo: https://nexodipa.github.io/bot-de-trading/"
     HASHTAGS: str = "#BinanceSquare #TradingCuantitativo #Bitcoin #CryptoTrading #ArcaFid"
 
     @staticmethod
