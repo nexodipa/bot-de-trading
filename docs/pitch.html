@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ArcaFid Quantitative Capital — Propuesta para Inversores</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #09090b; color: #f4f4f5; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: "tnum" 1, "zero" 1; }
+  </style>
+</head>
+<body class="bg-[#09090b] text-[#f4f4f5] antialiased p-4 sm:p-8 min-h-screen flex flex-col items-center justify-center">
+
+  <div class="max-w-4xl w-full bg-[#111215] border border-white/10 rounded-2xl shadow-2xl overflow-hidden my-4">
+    
+    <!-- Header / Brand Banner -->
+    <div class="p-6 sm:p-8 border-b border-white/10 bg-[#14161b] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-sm">AF</span>
+          <span class="text-xs font-semibold tracking-wider uppercase text-emerald-400">Gestión Cuantitativa Institucional</span>
+        </div>
+        <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white mt-1">ArcaFid Quantitative Capital</h1>
+        <p class="text-sm text-zinc-400">Modelos algorítmicos no-custodiales para Criptoactivos (Binance) y Wall Street (Interactive Brokers)</p>
+      </div>
+
+      <div class="flex items-center gap-2 self-start sm:self-auto">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          Auditoría en Tiempo Real
+        </span>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex border-b border-white/10 bg-[#111215] px-6 gap-6 overflow-x-auto text-sm">
+      <button onclick="switchTab('trust')" id="tab-trust" class="py-3.5 px-2 font-medium border-b-2 border-emerald-400 text-emerald-400 transition-colors whitespace-nowrap">
+        🛡️ Seguridad: Lo que Somos vs. Lo que NO Hacemos
+      </button>
+      <button onclick="switchTab('simulator')" id="tab-simulator" class="py-3.5 px-2 font-medium border-b-2 border-transparent text-zinc-400 hover:text-white transition-colors whitespace-nowrap">
+        📈 Proyecciones & Simulador de ROI
+      </button>
+      <button onclick="switchTab('fees')" id="tab-fees" class="py-3.5 px-2 font-medium border-b-2 border-transparent text-zinc-400 hover:text-white transition-colors whitespace-nowrap">
+        🤝 Honorarios 100% a Éxito (0% Gestión)
+      </button>
+    </div>
+
+    <!-- TAB 1: SEGURIDAD (LO QUE SOMOS VS LO QUE NO HACEMOS) -->
+    <div id="content-trust" class="p-6 sm:p-8 space-y-6">
+      
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        <!-- LO QUE SOMOS -->
+        <div class="p-6 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.02] space-y-4">
+          <div class="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            LO QUE SÍ SOMOS (PILAR FIDUCIARIO)
+          </div>
+          
+          <ul class="space-y-3.5 text-sm text-zinc-300">
+            <li class="flex items-start gap-2.5">
+              <span class="text-emerald-400 font-bold mt-0.5">✓</span>
+              <span><strong class="text-white">100% No-Custodial:</strong> Tu dinero jamás sale de tu propia cuenta en Binance o Interactive Brokers. Solo conectas la API para que el algoritmo ejecute órdenes en tu nombre.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <span class="text-emerald-400 font-bold mt-0.5">✓</span>
+              <span><strong class="text-white">Permiso de retiro bloqueado:</strong> Las claves API se configuran obligatoriamente sin permiso de transferencias ni retiros. Nadie puede retirar tus fondos excepto tú mismo.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <span class="text-emerald-400 font-bold mt-0.5">✓</span>
+              <span><strong class="text-white">Cerrojo de Riesgo Estricto (-6.4% Drawdown):</strong> Si el mercado sufre un evento anómalo de volatilidad, el circuito de corte apaga las entradas para blindar el 93.6% de tu capital.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <span class="text-emerald-400 font-bold mt-0.5">✓</span>
+              <span><strong class="text-white">Auditoría Transparente 24/7:</strong> Cada compra y venta queda registrada en el libro mayor de tu broker con precio, volumen y hora exacta verificable al instante.</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- LO QUE NO HACEMOS -->
+        <div class="p-6 rounded-xl border border-rose-500/20 bg-rose-500/[0.02] space-y-4">
+          <div class="flex items-center gap-2 text-rose-400 font-semibold text-sm">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            LO QUE NUNCA HACEMOS (ANTI-ESTAFAS)
+          </div>
+          
+          <ul class="space-y-3.5 text-sm text-zinc-300">
+            <li class="flex items-start gap-2.5">
+              <span class="text-rose-400 font-bold mt-0.5">✕</span>
+              <span><strong class="text-white">NO pedimos depósitos a billeteras privadas:</strong> Desconfía de quien te pida enviar criptomonedas a su cuenta personal. Con nosotros, tú tienes la custodia total.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <span class="text-rose-400 font-bold mt-0.5">✕</span>
+              <span><strong class="text-white">NO prometemos "100% de ganancia en 24 horas":</strong> Las promesas de duplicar dinero son esquemas piramidales. Nuestro rendimiento proviene de ventajas estadísticas reales y sostenibles.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <span class="text-rose-400 font-bold mt-0.5">✕</span>
+              <span><strong class="text-white">NO usamos Martingala ni sobreapalancamiento:</strong> Jamás doblamos el tamaño de una posición perdedora. Cada operación arriesga solo entre 1% y 2% con Stop Loss técnico.</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <span class="text-rose-400 font-bold mt-0.5">✕</span>
+              <span><strong class="text-white">NO hay cláusulas de bloqueo forzoso:</strong> Si en cualquier momento deseas pausar o desconectar la API, lo haces con 1 solo clic desde tu broker al instante.</span>
+            </li>
+          </ul>
+        </div>
+
+      </div>
+
+      <!-- Quick Trust Callout -->
+      <div class="p-4 rounded-xl bg-white/[0.02] border border-white/10 flex items-center justify-between gap-4">
+        <div class="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+          <strong class="text-white">¿Por qué esto genera máxima confianza en el inversor?</strong> Porque al no custodiar el dinero, el inversor no asume riesgo de contraparte ni riesgo de fuga de capitales.
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: PROYECCIONES & SIMULADOR DE ROI -->
+    <div id="content-simulator" class="p-6 sm:p-8 space-y-6 hidden">
+      
+      <!-- Input Controls -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 p-5 rounded-xl bg-white/[0.02] border border-white/10">
+        <div>
+          <label class="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Capital de Inversión (USD / USDT)</label>
+          <div class="flex items-center gap-4">
+            <input type="range" id="capitalSlider" min="500" max="50000" step="500" value="5000" class="w-full accent-emerald-500 cursor-pointer" oninput="updateSimulation()">
+            <span id="capitalValue" class="font-mono font-bold text-lg text-white min-w-[5.5rem] text-right">$5,000</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Mandato / Perfil de Riesgo</label>
+          <select id="profileSelect" onchange="updateSimulation()" class="w-full bg-[#14161b] border border-white/15 rounded-lg p-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500">
+            <option value="balanced" selected>Balanceado Cuantitativo (~4.5% - 6.5% mensual / 60-90% anual)</option>
+            <option value="conservative">Conservador & Preservación (~2.5% - 3.5% mensual / 30-45% anual)</option>
+            <option value="dynamic">Dinámico / Alto Alpha (~8.0% - 10.5% mensual / 120-180% anual)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Projection Results Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="p-5 rounded-xl border border-white/10 bg-[#14161b]">
+          <div class="text-xs text-zinc-400">Retorno Estimado Mensual</div>
+          <div id="monthlyReturn" class="text-2xl font-bold font-mono text-emerald-400 mt-1">+$275 USDT</div>
+          <div id="monthlyRate" class="text-xs text-zinc-400 mt-0.5">+5.50% / mes promedio</div>
+        </div>
+
+        <div class="p-5 rounded-xl border border-white/10 bg-[#14161b]">
+          <div class="text-xs text-zinc-400">Proyección a 12 Meses (Compuesto)</div>
+          <div id="yearlyTotal" class="text-2xl font-bold font-mono text-white mt-1">$9,506 USDT</div>
+          <div id="yearlyGain" class="text-xs text-emerald-400 font-semibold mt-0.5">+$4,506 USDT (+90.1%)</div>
+        </div>
+
+        <div class="p-5 rounded-xl border border-white/10 bg-[#14161b]">
+          <div class="text-xs text-zinc-400">Cerrojo Máximo de Riesgo</div>
+          <div class="text-2xl font-bold font-mono text-rose-400 mt-1">-6.4%</div>
+          <div class="text-xs text-zinc-400 mt-0.5">Circuit breaker de corte automático</div>
+        </div>
+      </div>
+
+      <!-- Comparison Table -->
+      <div class="border border-white/10 rounded-xl overflow-hidden">
+        <table class="w-full text-left text-xs sm:text-sm">
+          <thead class="bg-[#14161b] border-b border-white/10 text-zinc-400 text-xs uppercase font-semibold">
+            <tr>
+              <th class="p-3.5">Vehículo de Inversión</th>
+              <th class="p-3.5">Retorno Anual Típico</th>
+              <th class="p-3.5">Custodia de Fondos</th>
+              <th class="p-3.5">Disponibilidad / Liquidez</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/5">
+            <tr>
+              <td class="p-3.5 font-semibold text-zinc-200">Depósito a Plazo Fijo / Banco</td>
+              <td class="p-3.5 text-zinc-400">4% – 7% anual</td>
+              <td class="p-3.5 text-zinc-400">Banco centralizado</td>
+              <td class="p-3.5 text-zinc-400">Bloqueado a 30-365 días</td>
+            </tr>
+            <tr>
+              <td class="p-3.5 font-semibold text-zinc-200">Fondo Mutuo Tradicional</td>
+              <td class="p-3.5 text-zinc-400">8% – 12% anual (comisión de 2% ganes o pierdas)</td>
+              <td class="p-3.5 text-zinc-400">Tercero fiduciario</td>
+              <td class="p-3.5 text-zinc-400">D+2 a D+5 días</td>
+            </tr>
+            <tr class="bg-emerald-500/[0.04]">
+              <td class="p-3.5 font-bold text-emerald-400">ArcaFid Quantitative Capital</td>
+              <td class="p-3.5 font-bold text-emerald-400 font-mono">55% – 90% anualizado compuesto</td>
+              <td class="p-3.5 font-semibold text-white">100% en tu propio broker</td>
+              <td class="p-3.5 font-semibold text-white">Inmediata 24/7 sin penalidad</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- TAB 3: HONORARIOS A ÉXITO -->
+    <div id="content-fees" class="p-6 sm:p-8 space-y-6 hidden">
+      <div class="text-sm text-zinc-300 leading-relaxed">
+        Nuestro modelo de negocio está 100% alineado con el éxito del inversor: <strong class="text-white">si tú no ganas, nosotros no cobramos absolutamente nada</strong>.
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="p-5 rounded-xl border border-white/10 bg-[#14161b] space-y-1">
+          <div class="text-xs uppercase tracking-wider text-zinc-400 font-semibold">Comisión de Gestión</div>
+          <div class="text-3xl font-bold font-mono text-emerald-400">0.0%</div>
+          <p class="text-xs text-zinc-400">Cero cobros mensuales o de mantenimiento fijo. No pagas por el tiempo transcurrido.</p>
+        </div>
+
+        <div class="p-5 rounded-xl border border-white/10 bg-[#14161b] space-y-1">
+          <div class="text-xs uppercase tracking-wider text-zinc-400 font-semibold">Hurdle Rate Anual</div>
+          <div class="text-3xl font-bold font-mono text-white">5.0%</div>
+          <p class="text-xs text-zinc-400">Primero ganas el 5% de retorno libre para ti antes de que aplique cualquier honorario.</p>
+        </div>
+
+        <div class="p-5 rounded-xl border border-white/10 bg-[#14161b] space-y-1">
+          <div class="text-xs uppercase tracking-wider text-zinc-400 font-semibold">Performance Fee</div>
+          <div class="text-3xl font-bold font-mono text-white">20%</div>
+          <p class="text-xs text-zinc-400">Con marca de agua estricta (High-Water Mark). Solo sobre ganancias netas ya realizadas.</p>
+        </div>
+      </div>
+
+      <div class="p-5 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.02] space-y-2">
+        <h4 class="text-xs font-bold uppercase tracking-wider text-emerald-400">Garantía High-Water Mark</h4>
+        <p class="text-xs sm:text-sm text-zinc-300 leading-relaxed">
+          Si el mercado tuviera un mes negativo, nosotros no cobramos ningún honorario hasta que la cartera se haya recuperado por completo y supere su pico histórico previo de beneficios.
+        </p>
+      </div>
+    </div>
+
+    <!-- Footer Action Bar -->
+    <div class="p-6 border-t border-white/10 bg-[#14161b] flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div class="text-xs text-zinc-400 text-center sm:text-left">
+        ¿Listo para conectar tu cuenta o auditar nuestro libro mayor?
+      </div>
+      <div class="flex items-center gap-3 w-full sm:w-auto">
+        <a href="https://josuest-b.github.io/bot-de-trading/" target="_blank" class="flex-1 sm:flex-none text-center px-4 py-2.5 rounded-xl text-xs font-semibold border border-white/15 bg-white/5 hover:bg-white/10 text-white transition-colors">
+          Ver Auditoría en Vivo
+        </a>
+        <a href="https://t.me/AdminVIPSignals" target="_blank" class="flex-1 sm:flex-none text-center px-4 py-2.5 rounded-xl text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-colors shadow-sm">
+          Contactar por Telegram (@AdminVIPSignals)
+        </a>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function switchTab(tabId) {
+      ['trust', 'simulator', 'fees'].forEach(id => {
+        const btn = document.getElementById('tab-' + id);
+        const content = document.getElementById('content-' + id);
+        if (id === tabId) {
+          btn.className = 'py-3.5 px-2 font-medium border-b-2 border-emerald-400 text-emerald-400 transition-colors whitespace-nowrap';
+          content.classList.remove('hidden');
+        } else {
+          btn.className = 'py-3.5 px-2 font-medium border-b-2 border-transparent text-zinc-400 hover:text-white transition-colors whitespace-nowrap';
+          content.classList.add('hidden');
+        }
+      });
+    }
+
+    function updateSimulation() {
+      const capital = parseFloat(document.getElementById('capitalSlider').value);
+      const profile = document.getElementById('profileSelect').value;
+      
+      document.getElementById('capitalValue').innerText = '$' + capital.toLocaleString('en-US');
+
+      let monthlyRate = 0.055; // 5.5%
+      let rateText = '+5.50% / mes promedio';
+
+      if (profile === 'conservative') {
+        monthlyRate = 0.030;
+        rateText = '+3.00% / mes promedio';
+      } else if (profile === 'dynamic') {
+        monthlyRate = 0.090;
+        rateText = '+9.00% / mes promedio';
+      }
+
+      const monthlyGain = capital * monthlyRate;
+      const yearlyMultiplier = Math.pow(1 + monthlyRate, 12);
+      const yearlyTotalVal = capital * yearlyMultiplier;
+      const yearlyGainVal = yearlyTotalVal - capital;
+      const yearlyGainPct = (yearlyMultiplier - 1) * 100;
+
+      document.getElementById('monthlyReturn').innerText = '+$' + Math.round(monthlyGain).toLocaleString('en-US') + ' USDT';
+      document.getElementById('monthlyRate').innerText = rateText;
+
+      document.getElementById('yearlyTotal').innerText = '$' + Math.round(yearlyTotalVal).toLocaleString('en-US') + ' USDT';
+      document.getElementById('yearlyGain').innerText = '+$' + Math.round(yearlyGainVal).toLocaleString('en-US') + ' USDT (+' + yearlyGainPct.toFixed(1) + '%)';
+    }
+
+    // Initialize
+    updateSimulation();
+  </script>
+</body>
+</html>
