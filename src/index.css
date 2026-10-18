@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+:root {
+  --bg-base: #09090b;
+  --bg-surface: #111215;
+  --bg-card: #14161b;
+  --bg-card-hover: #1a1d24;
+  --bg-elevated: #1a1d24;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.14);
+  --border-accent: rgba(255, 255, 255, 0.18);
+  --text-main: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --text-dim: #71717a;
+  --accent: #f4f4f5;
+  --accent-bright: #ffffff;
+  --accent-glow: transparent;
+  --green: #10b981;
+  --green-bright: #10b981;
+  --green-glow: transparent;
+  --red: #f43f5e;
+  --red-bright: #f43f5e;
+  --gold: #f4f4f5;
+  --gold-bright: #e4e4e7;
+  --purple: #a1a1aa;
+  --btn-primary-bg: #f4f4f5;
+  --btn-primary-text: #09090b;
+  --btn-outline-bg: #14161b;
+  --btn-outline-text: #f4f4f5;
+  --btn-outline-border: rgba(255, 255, 255, 0.14);
+}
+
+[data-theme="light"] {
+  --bg-base: #ffffff;
+  --bg-surface: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f5f9;
+  --bg-elevated: #f8fafc;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-light: rgba(0, 0, 0, 0.12);
+  --border-accent: rgba(0, 0, 0, 0.18);
+  --text-main: #09090b;
+  --text-muted: #52525b;
+  --text-dim: #71717a;
+  --accent: #2563eb;
+  --accent-bright: #1d4ed8;
+  --accent-glow: transparent;
+  --green: #10b981;
+  --green-bright: #059669;
+  --green-glow: transparent;
+  --red: #e11d48;
+  --red-bright: #be123c;
+  --gold: #2563eb;
+  --gold-bright: #1d4ed8;
+  --purple: #6366f1;
+  --btn-primary-bg: #09090b;
+  --btn-primary-text: #ffffff;
+  --btn-outline-bg: #ffffff;
+  --btn-outline-text: #09090b;
+  --btn-outline-border: rgba(0, 0, 0, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-main);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+code, .mono, .kpi-val, .metric-val, .price, .target-val, input, select, button {
+  font-family: 'JetBrains Mono', monospace;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}

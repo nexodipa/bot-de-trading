@@ -1,2 +1,0 @@
-"""Binance trading bot package."""
-

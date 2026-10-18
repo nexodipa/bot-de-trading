@@ -1,0 +1,6 @@
+{
+  "name": "ArcaFid Quantitative Asset Management",
+  "description": "Institutional quantitative asset management platform, multi-asset algorithmic syndicate, risk engine, and investor workstation.",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
