@@ -1084,6 +1084,7 @@ class LiveTrader:
                 ml_filter=self.ml_filter,
                 news_analyzer=self.news_analyzer,
                 is_crypto=True,
+                min_quality=getattr(self.cfg, "min_entry_quality", 0.65),
             )
             logging.info(
                 f"[{self.cfg.symbol}] Composite 5-Factor Score: {factor_breakdown.composite:.3f} "
@@ -1190,6 +1191,26 @@ class LiveTrader:
             quote_cap = min(quote_cap, quote_free)
         qty = min(qty, quote_cap / (entry_ref * (1 + self.cfg.fee_rate)))
         qty, qty_reason = self._prepare_live_qty(qty, entry_ref)
+        if qty <= 0:
+            # Adaptador de Micro-Capital Viable:
+            # Si el rechazo fue por no alcanzar el mínimo nocional (ej. posición fraccional < $5 USDT),
+            # pero el saldo libre cubre el mínimo de Binance ($5.00 USDT) y está dentro de live_max_quote_per_trade:
+            min_viable_quote = self.symbol_filters.min_notional * 1.02
+            if (
+                qty_reason == "min_notional_rejected"
+                and quote_free >= min_viable_quote
+                and self.cfg.live_max_quote_per_trade >= self.symbol_filters.min_notional
+            ):
+                viable_qty = min_viable_quote / entry_ref
+                v_qty, v_reason = self._prepare_live_qty(viable_qty, entry_ref)
+                if v_qty > 0 and v_reason == "ok":
+                    logging.info(
+                        f"[{self.cfg.symbol}] Micro-capital activo: orden adaptada al mínimo nocional viable de Binance "
+                        f"({min_viable_quote:.2f} {self.quote_asset} de {quote_free:.2f} disponibles)."
+                    )
+                    qty = v_qty
+                    qty_reason = "ok"
+
         if qty <= 0:
             self.last_processed_close_time = now
             return {"time": now.isoformat(), "event": "hold", "reason": qty_reason}
@@ -2559,7 +2580,12 @@ def _ibkr_step(client, base_cfg: BotConfig, symbol: str, strategy, risk, last_cl
 
     # 5-Factor Quantitative Brain Evaluation (S_composite >= 0.72)
     from bot.quant_engine import QuantEngine
-    score = QuantEngine.evaluate_setup(symbol=symbol, df=analysis_df, is_crypto=False)
+    score = QuantEngine.evaluate_setup(
+        symbol=symbol,
+        df=analysis_df,
+        is_crypto=False,
+        min_quality=getattr(base_cfg, "min_entry_quality", 0.65),
+    )
     if not score.is_buy_authorized:
         last_close[symbol] = close_time
         return {

@@ -251,23 +251,30 @@ class BinanceSquareContentGenerator:
     @classmethod
     def generate_audited_performance_report(
         cls,
-        win_rate_pct: float = 78.5,
-        profit_factor: float = 2.65,
-        drawdown_lock_pct: float = -6.4,
-        sharpe_ratio: float = 2.42,
-        total_trades: int = 142,
+        win_rate_pct: float,
+        profit_factor: float | None,
+        drawdown_lock_pct: float | None,
+        sharpe_ratio: float | None,
+        total_trades: int,
+        source: str = "live_closed_trades",
     ) -> str:
-        """Genera informe de resultados auditados con redacción clara, honesta y profesional."""
+        """Informe calculado desde operaciones reales; sin valores por defecto inventados."""
+        origin = {
+            "live_closed_trades": "operaciones reales cerradas",
+            "paper_trading": "simulación (paper trading, sin capital real)",
+        }.get(source, source)
+        pf = "n/d" if profit_factor is None else f"{profit_factor:.2f}"
+        dd = "n/d" if drawdown_lock_pct is None else f"{drawdown_lock_pct:.1f}%"
+        sh = "n/d" if sharpe_ratio is None else f"{sharpe_ratio:.2f}"
         raw_post = (
-            f"Transparencia y resultados en la gestión de Proyecto Fehu (ᚠ) Quantitative (ArcaFid)\n\n"
-            f"En el trading profesional, cuidar el capital y mantener una estadística consistente vale mucho más que cualquier promesa. "
-            f"Compartimos el balance auditado de nuestra operativa hasta la fecha:\n\n"
+            f"Resultados de Proyecto Fehu (ᚠ) Quantitative (ArcaFid)\n\n"
+            f"Estadística calculada sobre {total_trades} {origin}. "
+            f"El rendimiento pasado no garantiza resultados futuros:\n\n"
             f"• Tasa de acierto (Win Rate): {win_rate_pct:.1f}%\n"
-            f"• Factor de beneficio (Profit Factor): {profit_factor:.2f}\n"
-            f"• Límite estricto de caída máxima (Drawdown): {drawdown_lock_pct:.1f}%\n"
-            f"• Ratio de Sharpe: {sharpe_ratio:.2f} en {total_trades} operaciones verificadas\n\n"
-            f"Creemos en la transparencia fiduciaria total: cualquier inversor puede revisar nuestro libro mayor auditado "
-            f"y simular proyecciones reales de retorno directamente en nuestro portal web.\n\n"
+            f"• Factor de beneficio (Profit Factor): {pf}\n"
+            f"• Máxima caída observada (Drawdown): {dd}\n"
+            f"• Sharpe por operación (no anualizado): {sh}\n\n"
+            f"Esto no es asesoramiento financiero. Operar con criptoactivos implica riesgo de pérdida de capital.\n\n"
             f"{cls.CTA_TELEGRAM}\n"
             f"{cls.CTA_PORTAL}\n\n"
             f"{cls.HASHTAGS}"
@@ -512,13 +519,22 @@ class BinanceSquarePublisher:
             out_parts.append(clean_text[last_idx:])
             clean_text = "".join(out_parts)
 
+        # Cumplimiento estricto con las Directrices Comunitarias de Binance Square:
+        # Purgar menciones a canales de mensajería externa (@AdminVIPSignals, comandos /subscribe)
+        # para evitar restricciones de cuenta (código 30023)
+        square_clean_text = clean_text
+        square_clean_text = re.sub(r"[📲📱]?\s*Canal VIP.*?(\n|$)", "", square_clean_text, flags=re.IGNORECASE)
+        square_clean_text = square_clean_text.replace("@AdminVIPSignals", "")
+        square_clean_text = square_clean_text.replace("(escribe /subscribe)", "").replace("/subscribe", "")
+        square_clean_text = re.sub(r"\n{3,}", "\n\n", square_clean_text).strip()
+
         headers = {
             "X-Square-OpenAPI-Key": self.api_key,
             "Content-Type": "application/json",
             "clienttype": "binanceSkill",
         }
         payload = {
-            "bodyTextOnly": clean_text,
+            "bodyTextOnly": square_clean_text,
         }
 
         # 4. Modo dry-run explícito configurado
@@ -613,7 +629,13 @@ class BinanceSquarePublisher:
                     )
                     return True
                 else:
-                    logging.error("Respuesta con código de error de negocio en Binance Square: %s", res_data)
+                    if str(res_data.get("code")) == "30023":
+                        logging.warning(
+                            "Aviso Binance Square: La cuenta tiene una restricción temporal comunitaria activa (código 30023). "
+                            "Verifica el buzón de notificaciones en la app de Binance para revisar la fecha de levantamiento."
+                        )
+                    else:
+                        logging.error("Respuesta con código de error de negocio en Binance Square: %s", res_data)
                     self._record_event(
                         mode="binance_square",
                         symbol=sym,

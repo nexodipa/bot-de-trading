@@ -39,7 +39,7 @@ class BotConfig:
     min_trend_strength: float = 0.002
     min_confidence: float = 0.55
     strategy_mode: str = "auto"
-    min_entry_quality: float = 0.72
+    min_entry_quality: float = 0.65
     min_volume_z: float = -0.15
     max_entry_rsi: float = 70.0
     max_chase_atr_mult: float = 1.35

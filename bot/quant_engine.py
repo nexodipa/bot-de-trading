@@ -351,6 +351,7 @@ class QuantEngine:
         ml_filter: Any = None,
         news_analyzer: Any = None,
         is_crypto: bool | None = None,
+        min_quality: float | None = None,
     ) -> FactorBreakdown:
         """
         Comprehensive multi-factor evaluation for any of the 14 assets.
@@ -372,7 +373,8 @@ class QuantEngine:
             sent=s_sent,
         )
 
-        is_authorized = bool(composite >= cls.THRESHOLD and d_vol.get("veto") is None)
+        hurdle = float(min_quality) if min_quality is not None else cls.THRESHOLD
+        is_authorized = bool(composite >= hurdle and d_vol.get("veto") is None)
 
         details = {
             "trend_details": d_trend,
@@ -380,7 +382,7 @@ class QuantEngine:
             "volatility_details": d_vol,
             "ml_details": d_ml,
             "sentiment_details": d_sent,
-            "hurdle": cls.THRESHOLD,
+            "hurdle": hurdle,
         }
 
         return FactorBreakdown(
