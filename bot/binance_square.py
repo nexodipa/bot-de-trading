@@ -282,8 +282,99 @@ class BinanceSquareContentGenerator:
         return sanitize_for_square(raw_post, max_chars=cls.MAX_CHARS)
 
 
+def enforce_square_community_compliance(text: str) -> str:
+    """Filtro estricto de cumplimiento comunitario para Binance Square OpenAPI (Prevención Código 30023 / 200001 / 220094).
+
+    Elimina en la frontera de red cualquier vector de redirección externa o captación fuera de plataforma:
+    - Enlaces web externos (https://, github.io, dominios de terceros).
+    - Menciones a Telegram, WhatsApp, Discord, canales VIP, @handles y comandos (/subscribe, /plans, /vip).
+    - Direcciones de billeteras cripto (TRC20 / ERC20 / BEP20).
+    - Adapta nomenclatura de ejecución a lenguaje estrictamente analítico/educativo en reportes multilínea.
+    - Garantiza máximo 3 hashtags (#) por publicación (regla 220094) y descargo de responsabilidad educativo (DYOR).
+    """
+    if not text:
+        return ""
+
+    out = text
+
+    # 1. Purgar líneas completas de CTAs externos (Canal VIP, Portal Institucional, simulador web, Telegram)
+    out = re.sub(
+        r"^[ \t]*[📲📱🏛️🌐]?\s*(?:Canal VIP|Portal Institucional|Notificación de depósito|Dirección Oficial de Liquidación).*?(?:\n|$)",
+        "",
+        out,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+
+    # 2. Purgar URLs externas (https://, http://, www., github.io) y paréntesis vacíos residuales
+    out = re.sub(r"https?://\S+", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bwww\.\S+", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"\b[a-zA-Z0-9_-]+\.github\.io(?:/\S*)?", "", out, flags=re.IGNORECASE)
+
+    # 3. Purgar menciones @handle, comandos de bot y referencias explícitas a redes de mensajería externas
+    out = out.replace("@AdminVIPSignals", "")
+    out = re.sub(r"@[a-zA-Z0-9_]{3,}", "", out)
+    out = re.sub(r"\(\s*(?:escribe|comando)\s*/[a-zA-Z0-9_]+\s*\)", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"(?<!\w)/(?:subscribe|plans|vip|start)\b", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"\b(?:Telegram|WhatsApp|Discord|Canal VIP|Señales VIP)\b", "", out, flags=re.IGNORECASE)
+
+    # 4. Purgar direcciones de billeteras cripto (TRC20 / EVM) para evitar bloqueos anti-phishing
+    out = re.sub(r"\bT[1-9A-HJ-NP-Za-km-z]{33}\b", "", out)
+    out = re.sub(r"\b0x[a-fA-F0-9]{40}\b", "", out)
+
+    # 5. En reportes multilínea estructurados, transformar terminología de señal operativa a análisis técnico educativo
+    is_multiline_report = "\n" in out and len(out) > 120
+    if is_multiline_report:
+        replacements = [
+            ("Niveles clave de la operación:", "Zonas técnicas de referencia en el gráfico:"),
+            ("• Entrada de referencia:", "• Zona de equilibrio observada:"),
+            ("• Stop Loss de protección:", "• Nivel de invalidación de estructura:"),
+            ("• Primer objetivo:", "• Resistencia técnica 1:"),
+            ("(tomamos parcial y protegemos en punto de entrada)", "(zona de liquidez primaria)"),
+            ("• Segundo objetivo:", "• Resistencia técnica 2:"),
+            ("• Tercer objetivo:", "• Resistencia técnica 3:"),
+            ("Detectamos una configuración de compra (BUY)", "Observamos una estructura técnica alcista"),
+        ]
+        for old_str, new_str in replacements:
+            out = out.replace(old_str, new_str)
+
+    # 6. Limitar número total de hashtags a máximo 3 (prevención de error 220094 en Binance Square OpenAPI)
+    matches = list(re.finditer(r"#([a-zA-Z0-9_]+)", out))
+    if len(matches) > 3:
+        out_parts: list[str] = []
+        last_idx = 0
+        for i, m in enumerate(matches):
+            out_parts.append(out[last_idx:m.start()])
+            if i < 3:
+                out_parts.append(m.group(0))
+            else:
+                out_parts.append(m.group(1))
+            last_idx = m.end()
+        out_parts.append(out[last_idx:])
+        out = "".join(out_parts)
+
+    # 7. Asegurar descargo educativo (DYOR) en publicaciones analíticas multilínea si no está presente
+    if is_multiline_report:
+        low_out = out.lower()
+        if "no es asesoramiento financiero" not in low_out and "no constituye asesoramiento financiero" not in low_out:
+            disclaimer = "Nota: Análisis cuantitativo estrictamente educativo e informativo (DYOR). No constituye asesoramiento financiero."
+            hashtag_match = re.search(r"\n(#\w+(?:\s+\S+)*)\s*$", out)
+            if hashtag_match and len(out) + len(disclaimer) + 4 <= 1950:
+                prefix = out[:hashtag_match.start()].rstrip()
+                suffix = hashtag_match.group(1).strip()
+                out = f"{prefix}\n\n{disclaimer}\n\n{suffix}"
+            elif len(out) + len(disclaimer) + 2 <= 1950:
+                out = f"{out.rstrip()}\n\n{disclaimer}"
+
+    # Limpiar paréntesis vacíos y saltos de línea excesivos
+    out = re.sub(r"\(\s*\)", "", out)
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out
+
+
 class SquareRateLimiter:
-    """Limitador de frecuencia híbrido con ventana deslizante horaria, espaciado de cooldown y deduplicación.
+    """Limitador de frecuencia híbrido con ventana deslizante horaria, espaciado de cooldown, deduplicación
+    y disyuntor automático (Circuit Breaker) ante restricciones comunitarias (código 30023 / 200001).
     
     Persistencia atómica de estado en tabla `bot_state` de SQLite (ON CONFLICT DO UPDATE).
     """
@@ -300,6 +391,8 @@ class SquareRateLimiter:
         self.last_post_ts: float = 0.0
         self.hourly_timestamps: list[float] = []
         self.recent_hashes: list[dict[str, Any]] = []
+        self.restriction_until_ts: float = 0.0
+        self.restriction_code: str = ""
         self._lock = threading.Lock()
         self._init_db_and_load_state()
 
@@ -327,6 +420,8 @@ class SquareRateLimiter:
                     self.last_post_ts = float(data.get("last_post_ts", 0.0))
                     self.hourly_timestamps = [float(ts) for ts in data.get("hourly_timestamps", [])]
                     self.recent_hashes = list(data.get("recent_hashes", []))
+                    self.restriction_until_ts = float(data.get("restriction_until_ts", 0.0))
+                    self.restriction_code = str(data.get("restriction_code", ""))
             finally:
                 conn.close()
         except Exception as exc:
@@ -344,6 +439,8 @@ class SquareRateLimiter:
                         "last_post_ts": self.last_post_ts,
                         "hourly_timestamps": self.hourly_timestamps,
                         "recent_hashes": self.recent_hashes,
+                        "restriction_until_ts": self.restriction_until_ts,
+                        "restriction_code": self.restriction_code,
                     }
                 )
                 with conn:
@@ -362,10 +459,38 @@ class SquareRateLimiter:
         except Exception as exc:
             logging.debug("Error guardando estado SQLite de SquareRateLimiter: %s", exc)
 
-    def can_publish(self, text: str, is_priority_alert: bool = False) -> tuple[bool, str]:
-        """Evalúa si una publicación cumple con los límites de frecuencia, cooldown y deduplicación."""
+    def is_restricted(self) -> tuple[bool, str]:
+        """Verifica si el disyuntor de protección comunitaria (30023 / 200001) está activo."""
         with self._lock:
             now = time.time()
+            if self.restriction_until_ts > now:
+                rem_min = max(1, int((self.restriction_until_ts - now) / 60.0))
+                return True, (
+                    f"Compliance circuit breaker active (code {self.restriction_code or '30023'}): "
+                    f"paused for {rem_min}m to protect Binance Square account"
+                )
+            return False, "OK"
+
+    def record_restriction(self, code: str, cooldown_hours: float = 24.0) -> None:
+        """Activa una cuarentena preventiva tras recibir un código de restricción o advertencia comunitaria."""
+        with self._lock:
+            now = time.time()
+            self.restriction_code = str(code)
+            self.restriction_until_ts = now + max(float(cooldown_hours) * 3600.0, 300.0)
+            self._save_state()
+
+    def can_publish(self, text: str, is_priority_alert: bool = False) -> tuple[bool, str]:
+        """Evalúa si una publicación cumple con el disyuntor de seguridad, límites de frecuencia, cooldown y deduplicación."""
+        with self._lock:
+            now = time.time()
+
+            # 0. Verificar disyuntor de restricción comunitaria (código 30023 / 200001)
+            if self.restriction_until_ts > now:
+                rem_min = max(1, int((self.restriction_until_ts - now) / 60.0))
+                return False, (
+                    f"Compliance circuit breaker active (code {self.restriction_code or '30023'}): "
+                    f"rate limit cooldown active for {rem_min}m"
+                )
 
             # 1. Limpiar ventana deslizante horaria (últimos 3600 segundos)
             self.hourly_timestamps = [ts for ts in self.hourly_timestamps if now - ts < 3600.0]
@@ -407,6 +532,7 @@ class BinanceSquarePublisher:
     
     Implementa:
     - Validación de cabecera X-Square-OpenAPI-Key.
+    - Filtro de cumplimiento comunitario (`enforce_square_community_compliance`) y disyuntor 30023.
     - Reintentos con retroceso exponencial y jitter ante errores HTTP 429, 500, 502, 503 y timeouts.
     - Degradación elegante en modo simulación/standby cuando la API no está configurada.
     - Registro de telemetría fiduciaria en la tabla `events` de SQLite (`bot_events.sqlite3`).
@@ -488,6 +614,18 @@ class BinanceSquarePublisher:
                 )
             return False
 
+        # 1b. Verificar siempre si existe una restricción comunitaria activa (30023) para no insistir contra la API
+        restricted, rest_reason = self.rate_limiter.is_restricted()
+        if restricted:
+            logging.warning("Publicación en Binance Square omitida por cuarentena de seguridad: %s", rest_reason)
+            self._record_event(
+                mode="binance_square",
+                symbol=sym,
+                event="binance_square_rate_limited",
+                payload={"reason": rest_reason, "text": text[:300], "metadata": metadata or {}},
+            )
+            return False
+
         # 2. Comprobación opcional de rate limit si se invoca directamente
         if check_rate_limit:
             can_pub, reason = self.rate_limiter.can_publish(text, is_priority_alert=is_priority_alert)
@@ -501,32 +639,9 @@ class BinanceSquarePublisher:
                 )
                 return False
 
-        # 3. Sanitizar texto y armar payload compatible con OpenAPI
+        # 3. Sanitizar texto y aplicar filtro estricto de Directrices Comunitarias de Binance Square
         clean_text = sanitize_for_square(text)
-
-        # Limitar número total de hashtags a 3 para cumplir con la regla estricta de Binance Square OpenAPI (error 220094)
-        matches = list(re.finditer(r"#([a-zA-Z0-9_]+)", clean_text))
-        if len(matches) > 3:
-            out_parts: list[str] = []
-            last_idx = 0
-            for i, m in enumerate(matches):
-                out_parts.append(clean_text[last_idx:m.start()])
-                if i < 3:
-                    out_parts.append(m.group(0))
-                else:
-                    out_parts.append(m.group(1))
-                last_idx = m.end()
-            out_parts.append(clean_text[last_idx:])
-            clean_text = "".join(out_parts)
-
-        # Cumplimiento estricto con las Directrices Comunitarias de Binance Square:
-        # Purgar menciones a canales de mensajería externa (@AdminVIPSignals, comandos /subscribe)
-        # para evitar restricciones de cuenta (código 30023)
-        square_clean_text = clean_text
-        square_clean_text = re.sub(r"[📲📱]?\s*Canal VIP.*?(\n|$)", "", square_clean_text, flags=re.IGNORECASE)
-        square_clean_text = square_clean_text.replace("@AdminVIPSignals", "")
-        square_clean_text = square_clean_text.replace("(escribe /subscribe)", "").replace("/subscribe", "")
-        square_clean_text = re.sub(r"\n{3,}", "\n\n", square_clean_text).strip()
+        square_clean_text = enforce_square_community_compliance(clean_text)
 
         headers = {
             "X-Square-OpenAPI-Key": self.api_key,
@@ -629,10 +744,20 @@ class BinanceSquarePublisher:
                     )
                     return True
                 else:
-                    if str(res_data.get("code")) == "30023":
+                    err_code = str(res_data.get("code", ""))
+                    if err_code == "30023":
+                        self.rate_limiter.record_restriction("30023", cooldown_hours=24.0)
                         logging.warning(
                             "Aviso Binance Square: La cuenta tiene una restricción temporal comunitaria activa (código 30023). "
-                            "Verifica el buzón de notificaciones en la app de Binance para revisar la fecha de levantamiento."
+                            "Disyuntor activado por 24h para proteger la cuenta y evitar penalizaciones adicionales."
+                        )
+                    elif err_code in {"200001", "220094"}:
+                        self.rate_limiter.record_restriction(err_code, cooldown_hours=6.0)
+                        logging.warning(
+                            "Aviso Binance Square: Código comunitario %s detectado. "
+                            "Disyuntor preventivo activado por 6h: %s",
+                            err_code,
+                            res_data,
                         )
                     else:
                         logging.error("Respuesta con código de error de negocio en Binance Square: %s", res_data)

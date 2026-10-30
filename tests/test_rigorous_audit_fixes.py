@@ -200,6 +200,69 @@ class TestRigorousAuditFixes(unittest.TestCase):
         finally:
             session.close()
 
+    def test_5_binance_square_compliance_shield_and_30023_circuit_breaker(self) -> None:
+        """
+        Verifies:
+        1. Outgoing OpenAPI payload strips external URLs (github.io, https://), @handles, /subscribe,
+           wallet addresses, and >3 hashtags while adding an educational DYOR disclaimer.
+        2. When Binance Square returns code '30023', the 24h circuit breaker trips and blocks
+           subsequent network calls to protect the account.
+        """
+        from bot.binance_square import (
+            BinanceSquareContentGenerator,
+            BinanceSquarePublisher,
+            enforce_square_community_compliance,
+        )
+
+        raw_setup = BinanceSquareContentGenerator.generate_quant_setup_post(
+            symbol="SOLUSDT",
+            action="BUY",
+            entry_price=145.50,
+            stop_price=141.80,
+            tp1=149.10,
+            tp2=153.50,
+            tp3=158.60,
+            composite_score=0.785,
+            timeframe="15m",
+            thesis="Ruptura técnica con volumen verificado. Wallet: TYDzsYocNCWiSCxZ5B29Y5c26q9wR18W3X",
+        )
+        compliant = enforce_square_community_compliance(raw_setup)
+        self.assertNotIn("https://", compliant)
+        self.assertNotIn("github.io", compliant)
+        self.assertNotIn("@AdminVIPSignals", compliant)
+        self.assertNotIn("/subscribe", compliant)
+        self.assertNotIn("Telegram", compliant)
+        self.assertNotIn("TYDzsYocNCWiSCxZ5B29Y5c26q9wR18W3X", compliant)
+        self.assertIn("no constituye asesoramiento financiero", compliant.lower())
+        # Max 3 hashtags
+        import re
+        self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", compliant)), 3)
+
+        # Test 30023 Circuit Breaker
+        cfg = BotConfig(
+            binance_square_enabled=True,
+            binance_square_api_key="test_sq_key",
+            event_db_path=self.db_path,
+        )
+        pub = BinanceSquarePublisher(cfg)
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"code": "30023", "message": "Account restricted", "success": False}
+            mock_post.return_value = mock_resp
+
+            ok1 = pub.publish_post(raw_setup)
+            self.assertFalse(ok1)
+            self.assertEqual(mock_post.call_count, 1)
+            restricted, reason = pub.rate_limiter.is_restricted()
+            self.assertTrue(restricted)
+            self.assertIn("30023", reason)
+
+            # Second attempt must be blocked locally without making any HTTP request
+            ok2 = pub.publish_post("Second post attempt")
+            self.assertFalse(ok2)
+            self.assertEqual(mock_post.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

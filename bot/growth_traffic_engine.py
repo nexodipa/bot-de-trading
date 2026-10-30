@@ -20,6 +20,7 @@ from bot.binance_square import (
     sanitize_for_square,
 )
 from bot.config import BotConfig
+from bot.performance import MIN_TRADES_FOR_STATS, get_real_performance
 from bot.telemetry import TelegramNotifier
 from bot.vip_signal_bot import VIPSignalFormatter, VIPSignalTracker
 
@@ -328,7 +329,9 @@ class AutoTrafficPublisher:
             time.sleep(1)
 
         telegram_interval_sec = max(60, interval_minutes * 60)
-        square_interval_sec = max(60, int(getattr(self.cfg, "binance_square_post_interval_hours", 2.0) * 3600))
+        # Cadencia conservadora para Binance Square: mínimo 6 horas (21,600s), por defecto 8h (máx 3 posts/día)
+        square_hours = max(float(getattr(self.cfg, "binance_square_post_interval_hours", 8.0) or 8.0), 6.0)
+        square_interval_sec = max(21600, int(square_hours * 3600))
 
         last_telegram_ts = 0.0
         last_square_ts = 0.0
@@ -343,12 +346,13 @@ class AutoTrafficPublisher:
                     self.publish_consolidated_executive_digest()
                     last_telegram_ts = now
 
-                # 2. Binance Square: Preservar capacidad de publicación independiente si está configurada
+                # 2. Binance Square: Publicación espaciada con verificación previa de cuarentena 30023
                 if self.cfg.binance_square_enabled and (now - last_square_ts >= square_interval_sec):
                     if square_cycle % 2 == 0:
                         self.publish_square_macro()
                     else:
-                        self.publish_square_audit()
+                        if not self.publish_square_audit():
+                            self.publish_square_macro()
                     square_cycle += 1
                     last_square_ts = now
 
@@ -384,37 +388,21 @@ class AutoTrafficPublisher:
         sent_label = str(sent.get("label", "Neutral Institucional"))
         sent_score = float(sent.get("score", 0.25))
 
-        # 2. Métricas de Cartera & Rendimiento Fiduciario
+        # 2. Métricas de Cartera & Rendimiento Fiduciario (solo datos reales; sin inventar win rate)
         if portfolio_summary is None:
             capital_total = float(getattr(self.cfg, "initial_balance", 10000.0))
-            pnl_valor = 0.0
-            pnl_pct = 0.0
-            win_rate = 78.5
-            num_trades = 0
-            try:
-                from bot.telemetry import EventStore
-                store = EventStore(self.cfg.event_db_path)
-                p_state = store.latest_paper_state()
-                if p_state and "value" in p_state:
-                    val = p_state["value"]
-                    capital_total = float(val.get("cash", capital_total))
-                    trades = val.get("trades", [])
-                    num_trades = len(trades)
-                    if trades:
-                        wins = sum(1 for t in trades if float(t.get("pnl", 0.0)) > 0)
-                        win_rate = (wins / num_trades) * 100.0
-                        pnl_valor = sum(float(t.get("pnl", 0.0)) for t in trades[-5:])
-                        if capital_total > 0:
-                            pnl_pct = (pnl_valor / capital_total) * 100.0
-                store.close()
-            except Exception:
-                pass
+            perf = get_real_performance(self.cfg.event_db_path, capital_total)
+            pnl_valor = float(perf["net_pnl"])
+            pnl_pct = (pnl_valor / capital_total) * 100.0 if capital_total > 0 else 0.0
+            win_rate = perf["win_rate_pct"]
+            num_trades = int(perf["total_trades"])
         else:
             capital_total = float(portfolio_summary.get("capital_total", getattr(self.cfg, "initial_balance", 10000.0)))
             pnl_valor = float(portfolio_summary.get("pnl_valor", 0.0))
             pnl_pct = float(portfolio_summary.get("pnl_pct", 0.0))
-            win_rate = float(portfolio_summary.get("win_rate", 78.5))
             num_trades = int(portfolio_summary.get("num_trades", 0))
+            raw_wr = portfolio_summary.get("win_rate")
+            win_rate = float(raw_wr) if (raw_wr is not None and num_trades >= MIN_TRADES_FOR_STATS) else None
 
         pnl_sign = "+" if pnl_valor >= 0 else "-"
 
@@ -455,7 +443,11 @@ class AutoTrafficPublisher:
             "💼 <b>ESTADO DE LA CARTERA & RENDIMIENTO FIDUCIARIO</b>",
             f"• <b>Capital Administrado:</b> <code>${capital_total:,.2f} USD</code>",
             f"• <b>Rendimiento Neto:</b> <b>{pnl_sign}${abs(pnl_valor):,.2f} USD ({pnl_sign}{abs(pnl_pct):.2f}%)</b>",
-            f"• <b>Efectividad Operativa:</b> <b>{win_rate:.1f}% Win Rate</b> ({num_trades} ejecuciones)",
+            (
+                f"• <b>Efectividad Operativa:</b> <b>{win_rate:.1f}% Win Rate</b> ({num_trades} ejecuciones)"
+                if win_rate is not None
+                else f"• <b>Efectividad Operativa:</b> muestra insuficiente ({num_trades} ejecuciones; mínimo {MIN_TRADES_FOR_STATS} para publicar estadísticas)"
+            ),
             "• <b>Salvaguarda Activa:</b> Límite Fiduciario Drawdown -6.4% (Operativa Normal)\n",
             "📈 <b>CONTEXTO MACRO & SENTIMIENTO</b>",
             f"• <b>Bitcoin (#BTC):</b> <code>${btc_price:,.2f}</code> (<b>{btc_chg:+.2f}%</b>)",
@@ -588,17 +580,35 @@ class AutoTrafficPublisher:
             return False
 
     def publish_square_macro(self) -> bool:
-        """Publica el reporte macro diario y ranking de top gainers a Binance Square."""
+        """Publica el reporte macro diario y ranking de top gainers a Binance Square con diversidad léxica."""
         try:
             top = self.screener.get_top_movers(min_volume_usdt=5_000_000.0, top_n=5)
             btc = self.screener.get_btc_macro()
             sent = self.sentiment_engine.fetch_latest_sentiment()
+            headlines = sent.get("headlines") or []
+            now_utc = datetime.now(timezone.utc)
+            session_label = (
+                "sesión asiática" if now_utc.hour < 8
+                else ("sesión europea" if now_utc.hour < 14 else "sesión americana")
+            )
+            btc_chg = float(btc.get("change_pct", 0.0))
+            flow_tone = (
+                "expansión de demanda en libro de órdenes"
+                if btc_chg > 0.5
+                else ("absorción defensiva en soportes" if btc_chg < -0.5 else "equilibrio de liquidez en rango")
+            )
+            hl_note = f" Destaca en la agenda informativa: {headlines[0]}." if headlines else ""
+            macro_summary = (
+                f"Durante la {session_label} ({now_utc.strftime('%d/%m %H:%M UTC')}) observamos {flow_tone}. "
+                f"La gestión de cartera prioriza activos con volumen orgánico verificable y dispersión controlada.{hl_note}"
+            )
             post = BinanceSquareContentGenerator.generate_macro_market_report(
                 btc_price=float(btc.get("price", 60500.0)),
-                btc_change_pct=float(btc.get("change_pct", 0.0)),
+                btc_change_pct=btc_chg,
                 top_gainers=top,
                 sentiment_label=str(sent.get("label", "Neutral")),
                 sentiment_score=float(sent.get("score", 0.0)),
+                macro_summary=macro_summary,
             )
             return enqueue_square_post(
                 post,
@@ -613,12 +623,22 @@ class AutoTrafficPublisher:
     def publish_square_audit(self) -> bool:
         """Publica el reporte de rendimiento auditado y transparencia fiduciaria a Binance Square."""
         try:
+            perf = get_real_performance(
+                self.cfg.event_db_path, float(getattr(self.cfg, "initial_balance", 0.0))
+            )
+            if not perf["sufficient_data"]:
+                logging.info(
+                    "Reporte de rendimiento omitido: %d operaciones reales (mínimo %d).",
+                    perf["total_trades"], perf["min_trades_required"],
+                )
+                return False
             post = BinanceSquareContentGenerator.generate_audited_performance_report(
-                win_rate_pct=78.5,
-                profit_factor=2.65,
-                drawdown_lock_pct=-6.4,
-                sharpe_ratio=2.42,
-                total_trades=142,
+                win_rate_pct=perf["win_rate_pct"],
+                profit_factor=perf["profit_factor"],
+                drawdown_lock_pct=perf["max_drawdown_pct"],
+                sharpe_ratio=perf["sharpe_per_trade"],
+                total_trades=perf["total_trades"],
+                source=perf["source"],
             )
             return enqueue_square_post(
                 post,
