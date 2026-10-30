@@ -284,6 +284,8 @@ class LiveTrader:
             key = f"optimal_config:{self.cfg.symbol}"
             state_record = self.db_session.query(DBBotState).filter(DBBotState.key == key).first()
             if state_record:
+                rec_sig = f"{state_record.updated_ts}:{state_record.value_json}"
+                already_logged = getattr(self, "_last_optimal_config_sig", None) == rec_sig
                 payload = json.loads(state_record.value_json)
                 params = payload.get("params", {})
                 if params and _autotune_candidate_is_acceptable(payload):
@@ -301,12 +303,16 @@ class LiveTrader:
                         self.risk.state = existing_state
                     else:
                         self.risk = RiskManager(self.cfg)
-                    logging.info(f"[{self.cfg.symbol}] Configuración auto-optimizada cargada con éxito: {params}")
+                    if not already_logged:
+                        logging.info(f"[{self.cfg.symbol}] Configuración auto-optimizada cargada con éxito: {params}")
+                        self._last_optimal_config_sig = rec_sig
                 elif params:
-                    logging.warning(
-                        "[%s] Configuracion auto-optimizada rechazada por metricas no rentables.",
-                        self.cfg.symbol,
-                    )
+                    if not already_logged:
+                        logging.warning(
+                            "[%s] Configuracion auto-optimizada rechazada por metricas no rentables.",
+                            self.cfg.symbol,
+                        )
+                        self._last_optimal_config_sig = rec_sig
         except Exception as e:
             logging.error(f"[{self.cfg.symbol}] Error al cargar configuración auto-optimizada para {self.cfg.symbol}: {e}")
 
@@ -825,7 +831,8 @@ class LiveTrader:
         row = analysis_df.iloc[-1]
         now: datetime = row["close_time"].to_pydatetime()
         if (
-            self.last_processed_close_time is not None
+            self.position is None
+            and self.last_processed_close_time is not None
             and now <= self.last_processed_close_time
         ):
             return {"time": now.isoformat(), "event": "hold", "reason": "duplicate_candle"}
@@ -1142,8 +1149,24 @@ class LiveTrader:
                 logging.debug("No se pudo obtener order book para pre-trade slippage: %s", ob_err)
 
         if current_ob is not None:
+            slip_expected = entry_ref
+            # Si el libro fue consultado en vivo (order_book is None), compensar la deriva natural
+            # desde el cierre de la vela hasta el instante de evaluación midiendo el spread real del libro
+            if order_book is None and isinstance(current_ob, dict) and current_ob.get("bids") and current_ob.get("asks"):
+                try:
+                    live_bid = float(current_ob["bids"][0][0])
+                    live_ask = float(current_ob["asks"][0][0])
+                    max_drift = max(atr_value * 0.75, close * 0.005)
+                    if live_bid > 0 and live_ask > 0 and (live_ask - close) <= max_drift:
+                        slip_expected = max(entry_ref, live_bid * (1 + self.cfg.slippage))
+                        entry_ref = max(entry_ref, live_ask)
+                        stop = entry_ref - (atr_value * self.cfg.stop_atr_mult)
+                        take = entry_ref + (entry_ref - stop) * self.cfg.take_profit_rr
+                except (IndexError, ValueError, TypeError):
+                    pass
+
             slip_allowed, projected_slip, slip_reason = self.risk.validate_pre_trade_slippage(
-                current_ob, expected_price=entry_ref, max_slippage=self.cfg.slippage
+                current_ob, expected_price=slip_expected, max_slippage=self.cfg.slippage
             )
             if not slip_allowed:
                 self.last_processed_close_time = now
@@ -1194,19 +1217,21 @@ class LiveTrader:
         if qty <= 0:
             # Adaptador de Micro-Capital Viable:
             # Si el rechazo fue por no alcanzar el mínimo nocional (ej. posición fraccional < $5 USDT),
-            # pero el saldo libre cubre el mínimo de Binance ($5.00 USDT) y está dentro de live_max_quote_per_trade:
+            # sumamos step_size para que el redondeo hacia abajo (floor) de normalize_quantity nunca caiga bajo $5.00 USDT:
             min_viable_quote = self.symbol_filters.min_notional * 1.02
             if (
                 qty_reason == "min_notional_rejected"
                 and quote_free >= min_viable_quote
                 and self.cfg.live_max_quote_per_trade >= self.symbol_filters.min_notional
             ):
-                viable_qty = min_viable_quote / entry_ref
+                step_buf = max(float(getattr(self.symbol_filters, "step_size", 0.0) or 0.0), 0.0)
+                viable_qty = (min_viable_quote / entry_ref) + step_buf
                 v_qty, v_reason = self._prepare_live_qty(viable_qty, entry_ref)
-                if v_qty > 0 and v_reason == "ok":
+                required_quote = v_qty * entry_ref * (1 + self.cfg.fee_rate)
+                if v_qty > 0 and v_reason == "ok" and quote_free >= required_quote:
                     logging.info(
                         f"[{self.cfg.symbol}] Micro-capital activo: orden adaptada al mínimo nocional viable de Binance "
-                        f"({min_viable_quote:.2f} {self.quote_asset} de {quote_free:.2f} disponibles)."
+                        f"({v_qty * entry_ref:.2f} {self.quote_asset} de {quote_free:.2f} disponibles)."
                     )
                     qty = v_qty
                     qty_reason = "ok"
@@ -1624,6 +1649,7 @@ def perform_auto_tuning(
 
             grid = _build_autotune_grid([
                 "auto",
+                "active_momentum",
                 "turtle_breakout",
                 "connors_rsi",
                 "elder_triple",
@@ -1635,7 +1661,7 @@ def perform_auto_tuning(
                 df,
                 top_n=1,
                 grid=grid,
-                min_trades=3,
+                min_trades=5,
             )
             if candidates:
                 best = candidates[0]

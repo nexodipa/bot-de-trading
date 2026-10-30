@@ -65,10 +65,22 @@ class EnterpriseManager:
         return user
 
     def add_api_credential(self, user_id: int, platform: str, api_key: str, api_secret: str, ibkr_client_id: int = None) -> DBApiCredential:
-        """Agrega credenciales de API cifradas para un usuario."""
+        """Agrega o actualiza credenciales de API cifradas para un usuario (idempotente)."""
         enc_key = encrypt_value(api_key)
         enc_secret = encrypt_value(api_secret)
-        
+
+        existing = self.db.query(DBApiCredential).filter(
+            DBApiCredential.user_id == user_id,
+            DBApiCredential.platform == platform,
+            DBApiCredential.is_active == True,
+        ).first()
+        if existing:
+            existing.encrypted_api_key = enc_key
+            existing.encrypted_api_secret = enc_secret
+            existing.ibkr_client_id = ibkr_client_id
+            self.db.commit()
+            return existing
+
         credential = DBApiCredential(
             user_id=user_id,
             platform=platform,

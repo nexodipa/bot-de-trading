@@ -241,15 +241,23 @@ class BinanceExecutionClient:
             self.client.API_URL = api_url
 
     def sync_clock(self) -> None:
-        try:
-            import time
-            res = self.client.get_server_time()
-            server_time = res['serverTime']
-            local_time = int(time.time() * 1000)
-            self.client.timestamp_offset = server_time - local_time
-            logger.info(f"Reloj sincronizado con Binance. Offset: {self.client.timestamp_offset}ms.")
-        except Exception as e:
-            logger.warning(f"No se pudo sincronizar el offset del reloj con Binance: {e}")
+        import time
+        for attempt in range(2):
+            try:
+                res = self.client.get_server_time()
+                server_time = res['serverTime']
+                local_time = int(time.time() * 1000)
+                self.client.timestamp_offset = server_time - local_time
+                logger.info(f"Reloj sincronizado con Binance. Offset: {self.client.timestamp_offset}ms.")
+                return
+            except Exception as e:
+                if attempt == 0 and self.retry_policy.is_transport_reset(e):
+                    try:
+                        self.client.session = self.client._init_session()
+                        continue
+                    except Exception:
+                        pass
+                logger.warning(f"No se pudo sincronizar el offset del reloj con Binance: {e}")
 
     def _call_signed(self, fn, *args, **kwargs) -> Any:
         """

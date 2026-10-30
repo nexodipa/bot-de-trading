@@ -45,6 +45,7 @@ class EarnManager:
     _last_sweep: datetime | None = field(default=None, init=False)
     _last_news_check: datetime | None = field(default=None, init=False)
     _flexible_products_cache: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
+    _sapi_write_unauthorized: bool = field(default=False, init=False)
 
     NEWS_KEYWORDS = ("launchpool", "hodler", "megadrop", "airdrop")
     NEWS_SEEN_PATH = Path("earn_seen_announcements.json")
@@ -97,6 +98,8 @@ class EarnManager:
         return sum(_f(p.get("totalAmount")) for p in self.flexible_positions(asset))
 
     def subscribe_flexible(self, asset: str, amount: float) -> dict[str, Any]:
+        if self._sapi_write_unauthorized:
+            return {"ok": False, "reason": "sapi_write_unauthorized"}
         product = self.flexible_product_for(asset)
         if not product:
             return {"ok": False, "reason": f"no_flexible_product:{asset}"}
@@ -118,8 +121,15 @@ class EarnManager:
                      product.get("latestAnnualPercentageRate"))
             return {"ok": bool(res.get("success", True)), "asset": asset, "amount": amount}
         except Exception as exc:
-            log.warning("Earn: fallo al suscribir %s: %s", asset, exc)
-            return {"ok": False, "reason": str(exc)}
+            err_str = str(exc)
+            if "-1002" in err_str or "not authorized" in err_str.lower():
+                self._sapi_write_unauthorized = True
+                log.info(
+                    "Earn: API key sin permiso Simple Earn (-1002); suscripciones desactivadas en esta sesion para preservar Spot."
+                )
+            else:
+                log.warning("Earn: fallo al suscribir %s: %s", asset, exc)
+            return {"ok": False, "reason": err_str}
 
     def redeem_flexible(self, asset: str, amount: float | None = None) -> dict[str, Any]:
         """Redime `amount` (o todo si None) del asset desde flexible."""

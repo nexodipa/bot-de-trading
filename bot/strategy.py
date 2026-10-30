@@ -621,7 +621,7 @@ class HybridStrategy:
         entry = self._entry_signal(fx, regime)
         regime_multiplier = 1.0
         if self.cfg.use_regime_filter:
-            if (entry.reason.startswith("mean_reversion") or "connors_rsi" in entry.reason) and regime.name in ("range", "bearish_trend"):
+            if (entry.reason.startswith("mean_reversion") or "connors_rsi" in entry.reason or "active_momentum" in entry.reason) and regime.name in ("range", "bearish_trend"):
                 regime_multiplier = 0.85
             else:
                 regime_multiplier = regime.risk_multiplier

@@ -145,26 +145,18 @@ class TestPostArchetypeRendering(unittest.TestCase):
     def test_render_archetype_3_audited_performance(self) -> None:
         """Archetype 3: Audited Performance Report (Win Rate 78.5%, Profit Factor, -6.4% drawdown lock)."""
         post = BinanceSquareContentGenerator.generate_audited_performance_report(
-            win_rate_pct=78.5,
-            profit_factor=2.65,
-            drawdown_lock_pct=-6.4,
-            sharpe_ratio=2.42,
-            total_trades=142
+            win_rate_pct=55.0,
+            profit_factor=1.40,
+            drawdown_lock_pct=-4.2,
+            sharpe_ratio=0.35,
+            total_trades=60,
+            source="live_closed_trades",
         )
         self.assertIsInstance(post, str)
         self.assertTrue(len(post) > 50)
-
-        # Invariant 1: Audited core metrics present
-        self.assertIn("78.5", post, "Win rate 78.5% must be present")
-        self.assertIn("2.65", post, "Profit factor 2.65 must be present")
-        self.assertIn("-6.4", post, "Drawdown lock -6.4% must be present")
-
-        # Invariant 2: Fiduciary audit invitation & secondary metrics
-        self.assertTrue("2.42" in post or "142" in post, "Sharpe ratio or total trades missing")
-        self.assertTrue(
-            any(w in post.lower() for w in ["audit", "fiduciari", "ledger", "libro", "transparencia", "verific"]),
-            "Fiduciary audit transparency phrasing missing"
-        )
+        for needle in ("55.0", "1.40", "-4.2", "0.35", "60"):
+            self.assertIn(needle, post)
+        self.assertIn("no garantiza", post.lower())
 
         # Invariant 3: Conversion CTAs & hashtags present
         self.assertIn("@AdminVIPSignals", post)
@@ -257,7 +249,9 @@ class TestContentFormattingAndLimits(unittest.TestCase):
             btc_price=64000.0, btc_change_pct=1.0, top_gainers=[],
             sentiment_label="Neutral", sentiment_score=0.0
         )
-        p3 = BinanceSquareContentGenerator.generate_audited_performance_report()
+        p3 = BinanceSquareContentGenerator.generate_audited_performance_report(
+            win_rate_pct=55.0, profit_factor=1.4, drawdown_lock_pct=-4.0, sharpe_ratio=0.3, total_trades=40
+        )
 
         for idx, post in enumerate([p1, p2, p3], start=1):
             self.assertIn("@AdminVIPSignals", post, f"Telegram VIP handle missing in Archetype {idx}")
@@ -303,11 +297,20 @@ class TestOpenAPINetworkMocking(unittest.TestCase):
     """Test suite for R2 & R3: Binance Square OpenAPI interaction, payloads, and HTTP error states."""
 
     def setUp(self) -> None:
+        self.db_path = os.path.join(tempfile.gettempdir(), f"test_sq_res_{uuid.uuid4().hex[:8]}.sqlite3")
         self.cfg = BotConfig(
             binance_square_enabled=True,
-            binance_square_api_key="mock_square_api_key_12345"
+            binance_square_api_key="mock_square_api_key_12345",
+            event_db_path=self.db_path,
         )
         self.publisher = BinanceSquarePublisher(self.cfg)
+
+    def tearDown(self) -> None:
+        if hasattr(self, "db_path") and os.path.exists(self.db_path):
+            try:
+                os.remove(self.db_path)
+            except Exception:
+                pass
 
     def _publish_helper(self, text: str, **kwargs: Any) -> bool:
         """Helper to invoke publish_post whether it takes extra kwargs or not."""
@@ -522,7 +525,7 @@ class TestRateLimitingAndScheduling(unittest.TestCase):
     @patch("requests.post")
     def test_http_429_retry_after_backoff(self, mock_post: MagicMock, mock_sleep: MagicMock) -> None:
         """Mock HTTP 429 Too Many Requests invokes sleep with backoff and succeeds on retry."""
-        cfg = BotConfig(binance_square_enabled=True, binance_square_api_key="valid_key")
+        cfg = BotConfig(binance_square_enabled=True, binance_square_api_key="valid_key", event_db_path=self.db_path)
         publisher = BinanceSquarePublisher(cfg)
 
         resp_429 = MagicMock()
