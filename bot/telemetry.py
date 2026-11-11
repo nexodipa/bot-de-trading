@@ -81,6 +81,41 @@ def _json_default(value: Any) -> str:
     return str(value)
 
 
+def _is_owner_pid_alive(owner_str: str | None) -> bool:
+    """Verifica si el proceso dueño de un cerrojo en esta máquina sigue en ejecución."""
+    if not owner_str or not isinstance(owner_str, str):
+        return False
+    parts = owner_str.split(":")
+    if len(parts) < 2:
+        return True
+    import socket
+    if parts[0] != socket.gethostname():
+        return True
+    try:
+        pid = int(parts[1])
+        if pid <= 0:
+            return False
+        import os
+        if os.name == "nt":
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            exit_code = ctypes.c_ulong()
+            success = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return bool(success and exit_code.value == STILL_ACTIVE)
+        else:
+            os.kill(pid, 0)
+            return True
+    except OSError:
+        return False
+    except Exception:
+        return True
+
+
 class EventStore:
     def __init__(self, db_path: str) -> None:
         self.db_path = Path(db_path)
@@ -231,7 +266,8 @@ class EventStore:
             except Exception:
                 pass
 
-            is_expired = curr_dt < cutoff
+            is_dead_owner = not _is_owner_pid_alive(curr_owner)
+            is_expired = (curr_dt < cutoff) or is_dead_owner
             is_same_owner = (curr_owner == owner)
 
             if is_expired or is_same_owner:

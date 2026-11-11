@@ -402,7 +402,7 @@ class AutoTrafficPublisher:
             pnl_pct = float(portfolio_summary.get("pnl_pct", 0.0))
             num_trades = int(portfolio_summary.get("num_trades", 0))
             raw_wr = portfolio_summary.get("win_rate")
-            win_rate = float(raw_wr) if (raw_wr is not None and num_trades >= MIN_TRADES_FOR_STATS) else None
+            win_rate = float(raw_wr) if raw_wr is not None else None
 
         pnl_sign = "+" if pnl_valor >= 0 else "-"
 
