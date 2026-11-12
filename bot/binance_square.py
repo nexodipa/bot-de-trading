@@ -338,9 +338,24 @@ def enforce_square_community_compliance(text: str) -> str:
             out = out.replace(old_str, new_str)
 
     # 6. Convertir menciones de criptoactivos en el cuerpo a cashtags nativos de Binance ($BTC, $ETH, $SOL, etc.)
-    # Esto habilita widgets interactivos de precio en Binance Square y evita sobrecargar el cupo de hashtags (#).
+    # y limitar cashtags totales ($COIN) a máximo 2 para cumplir estrictamente con el límite de pares
+    # permitido por Binance Square OpenAPI (prevención definitiva de error 220095).
     out = re.sub(r"#([A-Z0-9]{2,10})USDT\b", r"$\1", out)
     out = re.sub(r"#(BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|LINK|DOT|NEAR|SUI|PEPE)\b", r"$\1", out)
+
+    cashtags = list(re.finditer(r"\$([A-Z]{2,10})\b", out))
+    if len(cashtags) > 2:
+        out_parts = []
+        last_idx = 0
+        for i, m in enumerate(cashtags):
+            out_parts.append(out[last_idx:m.start()])
+            if i < 2:
+                out_parts.append(m.group(0))
+            else:
+                out_parts.append(m.group(1))
+            last_idx = m.end()
+        out_parts.append(out[last_idx:])
+        out = "".join(out_parts)
 
     # 7. Limitar número total de hashtags a máximo 3 (prevención de error 220094 en Binance Square OpenAPI)
     matches = list(re.finditer(r"#([a-zA-Z0-9_]+)", out))
@@ -771,12 +786,14 @@ class BinanceSquarePublisher:
                             "Aviso Binance Square: La cuenta tiene una restricción temporal comunitaria activa (código 30023). "
                             "Disyuntor activado por 24h para proteger la cuenta y evitar penalizaciones adicionales."
                         )
-                    elif err_code in {"200001", "220094"}:
-                        self.rate_limiter.record_restriction(err_code, cooldown_hours=6.0)
+                    elif err_code in {"200001", "220094", "220095"}:
+                        cooldown_h = 1.0 if err_code == "220095" else 6.0
+                        self.rate_limiter.record_restriction(err_code, cooldown_hours=cooldown_h)
                         logging.warning(
                             "Aviso Binance Square: Código comunitario %s detectado. "
-                            "Disyuntor preventivo activado por 6h: %s",
+                            "Disyuntor preventivo activado por %.1fh: %s",
                             err_code,
+                            cooldown_h,
                             res_data,
                         )
                     else:
