@@ -299,10 +299,10 @@ def enforce_square_community_compliance(text: str) -> str:
 
     # 1. Purgar líneas completas de CTAs externos (Canal VIP, Portal Institucional, simulador web, Telegram)
     out = re.sub(
-        r"^[ \t]*[📲📱🏛️🌐]?\s*(?:Canal VIP|Portal Institucional|Notificación de depósito|Dirección Oficial de Liquidación).*?(?:\n|$)",
+        r"(?m)^.*?(?:Canal VIP|Portal Institucional|simulador en vivo|Notificación de depósito|Dirección Oficial|@AdminVIPSignals|/subscribe).*$(?:\n|$)",
         "",
         out,
-        flags=re.IGNORECASE | re.MULTILINE,
+        flags=re.IGNORECASE,
     )
 
     # 2. Purgar URLs externas (https://, http://, www., github.io) y paréntesis vacíos residuales
@@ -337,7 +337,12 @@ def enforce_square_community_compliance(text: str) -> str:
         for old_str, new_str in replacements:
             out = out.replace(old_str, new_str)
 
-    # 6. Limitar número total de hashtags a máximo 3 (prevención de error 220094 en Binance Square OpenAPI)
+    # 6. Convertir menciones de criptoactivos en el cuerpo a cashtags nativos de Binance ($BTC, $ETH, $SOL, etc.)
+    # Esto habilita widgets interactivos de precio en Binance Square y evita sobrecargar el cupo de hashtags (#).
+    out = re.sub(r"#([A-Z0-9]{2,10})USDT\b", r"$\1", out)
+    out = re.sub(r"#(BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|LINK|DOT|NEAR|SUI|PEPE)\b", r"$\1", out)
+
+    # 7. Limitar número total de hashtags a máximo 3 (prevención de error 220094 en Binance Square OpenAPI)
     matches = list(re.finditer(r"#([a-zA-Z0-9_]+)", out))
     if len(matches) > 3:
         out_parts: list[str] = []
@@ -352,7 +357,7 @@ def enforce_square_community_compliance(text: str) -> str:
         out_parts.append(out[last_idx:])
         out = "".join(out_parts)
 
-    # 7. Asegurar descargo educativo (DYOR) en publicaciones analíticas multilínea si no está presente
+    # 8. Asegurar descargo educativo (DYOR) en publicaciones analíticas multilínea si no está presente
     if is_multiline_report:
         low_out = out.lower()
         if "no es asesoramiento financiero" not in low_out and "no constituye asesoramiento financiero" not in low_out:
@@ -734,13 +739,28 @@ class BinanceSquarePublisher:
                 )
 
                 if is_success:
-                    logging.info("Publicación en Binance Square enviada con éxito.")
+                    post_id = ""
+                    share_link = ""
+                    if isinstance(res_data.get("data"), dict):
+                        post_id = str(res_data["data"].get("id", ""))
+                        share_link = str(res_data["data"].get("shareLink", ""))
+                    logging.info(
+                        "Publicación en Binance Square enviada con éxito (ID: %s, URL: %s).",
+                        post_id or "N/A",
+                        share_link or "N/A",
+                    )
                     self.rate_limiter.record_published(clean_text)
                     self._record_event(
                         mode="binance_square",
                         symbol=sym,
                         event="binance_square_published",
-                        payload={"status": "published", "api_response": res_data, "metadata": metadata or {}},
+                        payload={
+                            "status": "published",
+                            "post_id": post_id,
+                            "share_link": share_link,
+                            "api_response": res_data,
+                            "metadata": metadata or {},
+                        },
                     )
                     return True
                 else:
