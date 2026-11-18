@@ -121,7 +121,7 @@ class BinanceDataClient:
             url = f"{base}/api/v3/klines"
             try:
                 def _do_get():
-                    return self.session.get(url, params=params, timeout=6)
+                    return self.session.get(url, params=params, timeout=(3.5, 12.0))
 
                 resp = self.retry_policy.execute(_do_get)
                 if hasattr(resp, "status_code") and resp.status_code == 200:
