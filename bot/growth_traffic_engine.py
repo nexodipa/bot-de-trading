@@ -6,6 +6,7 @@ import logging
 import os
 import queue
 import re
+import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
@@ -320,6 +321,115 @@ class AutoTrafficPublisher:
     def stop(self) -> None:
         self.running = False
 
+    def _get_persisted_ts(self, key: str) -> float:
+        db_path = getattr(self.cfg, "event_db_path", "")
+        if not db_path:
+            return 0.0
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT value_json FROM bot_state WHERE key = ?", (key,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    data = json.loads(row[0])
+                    return float(data.get("ts", 0.0))
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        return 0.0
+
+    def _set_persisted_ts(self, key: str, ts: float) -> None:
+        db_path = getattr(self.cfg, "event_db_path", "")
+        if not db_path:
+            return
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            try:
+                with conn:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, updated_ts TEXT, value_json TEXT)"
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO bot_state (key, updated_ts, value_json)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(key) DO UPDATE SET
+                            updated_ts = EXCLUDED.updated_ts,
+                            value_json = EXCLUDED.value_json;
+                        """,
+                        (key, datetime.now(timezone.utc).isoformat(), json.dumps({"ts": ts})),
+                    )
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    def _load_live_telemetry_snapshot(self) -> tuple[float | None, str, dict[str, str]]:
+        """Lee el último estado real desde SQLite: capital en vivo, cerrojo y motivos por símbolo."""
+        db_path = getattr(self.cfg, "event_db_path", "")
+        live_equity: float | None = None
+        cb_status = "Operativa Normal"
+        statuses: dict[str, str] = {}
+        if not db_path:
+            return live_equity, cb_status, statuses
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            try:
+                cur = conn.cursor()
+                # 1. Leer último estado de liquidez en bot_state
+                cur.execute(
+                    "SELECT value_json FROM bot_state WHERE key LIKE 'live:trader:%' ORDER BY updated_ts DESC LIMIT 1"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    st = json.loads(row[0])
+                    cash_val = st.get("cash")
+                    if isinstance(cash_val, (int, float)) and cash_val >= 0:
+                        live_equity = float(cash_val)
+
+                # 2. Leer estado real del circuit breaker global
+                cur.execute("SELECT value_json FROM bot_state WHERE key = 'circuit_breaker:global'")
+                cb_row = cur.fetchone()
+                if cb_row and cb_row[0]:
+                    cb_data = json.loads(cb_row[0])
+                    if cb_data.get("paused"):
+                        cb_status = f"Bloqueo Defensivo Activo ({cb_data.get('reason', 'Drawdown')})"
+
+                # 3. Leer último evento por símbolo en mode='live'
+                cur.execute(
+                    """
+                    SELECT e.symbol, e.event, e.payload_json
+                    FROM events e
+                    INNER JOIN (
+                        SELECT symbol, MAX(id) AS max_id
+                        FROM events
+                        WHERE mode = 'live' AND symbol != 'EARN'
+                        GROUP BY symbol
+                    ) latest ON e.id = latest.max_id
+                    """
+                )
+                for sym_raw, ev_name, payload_str in cur.fetchall():
+                    base_sym = re.sub(r"USDT$|_PERP$", "", str(sym_raw).upper())
+                    try:
+                        p = json.loads(payload_str) if payload_str else {}
+                    except Exception:
+                        p = {}
+                    if ev_name == "live_buy":
+                        statuses[base_sym] = f"🟢 Compra ejecutada a ${float(p.get('price', 0.0)):,.2f}"
+                    elif ev_name == "live_sell":
+                        statuses[base_sym] = f"🔴 Venta ejecutada a ${float(p.get('price', 0.0)):,.2f}"
+                    else:
+                        reason = str(p.get("reason", "") or ev_name)
+                        if reason:
+                            statuses[base_sym] = reason
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        return live_equity, cb_status, statuses
+
     def _traffic_loop(self, interval_minutes: int = 720) -> None:
         # Esperar hasta 30 segundos tras el arranque para no saturar al inicio,
         # comprobando self.running cada segundo para responder de inmediato a stop()
@@ -333,7 +443,7 @@ class AutoTrafficPublisher:
         square_hours = max(float(getattr(self.cfg, "binance_square_post_interval_hours", 8.0) or 8.0), 6.0)
         square_interval_sec = max(21600, int(square_hours * 3600))
 
-        last_telegram_ts = 0.0
+        last_telegram_ts = self._get_persisted_ts("telegram:last_digest_ts")
         last_square_ts = 0.0
         square_cycle = 0
 
@@ -343,8 +453,9 @@ class AutoTrafficPublisher:
 
                 # 1. Telegram: Estrictamente 2 resúmenes ejecutivos consolidados al día (intervalo 12h / 720 min)
                 if self.cfg.telegram_enabled and (now - last_telegram_ts >= telegram_interval_sec):
-                    self.publish_consolidated_executive_digest()
-                    last_telegram_ts = now
+                    if self.publish_consolidated_executive_digest():
+                        last_telegram_ts = now
+                        self._set_persisted_ts("telegram:last_digest_ts", now)
 
                 # 2. Binance Square: Publicación espaciada con verificación previa de cuarentena 30023
                 if self.cfg.binance_square_enabled and (now - last_square_ts >= square_interval_sec):
@@ -388,9 +499,15 @@ class AutoTrafficPublisher:
         sent_label = str(sent.get("label", "Neutral Institucional"))
         sent_score = float(sent.get("score", 0.25))
 
+        live_equity_snap, cb_status_text, live_statuses_snap = self._load_live_telemetry_snapshot()
+
         # 2. Métricas de Cartera & Rendimiento Fiduciario (solo datos reales; sin inventar win rate)
         if portfolio_summary is None:
-            capital_total = float(getattr(self.cfg, "initial_balance", 10000.0))
+            capital_total = (
+                live_equity_snap
+                if live_equity_snap is not None and live_equity_snap > 0
+                else float(getattr(self.cfg, "initial_balance", 10000.0))
+            )
             perf = get_real_performance(self.cfg.event_db_path, capital_total)
             pnl_valor = float(perf["net_pnl"])
             pnl_pct = (pnl_valor / capital_total) * 100.0 if capital_total > 0 else 0.0
@@ -422,7 +539,7 @@ class AutoTrafficPublisher:
 
         asset_lines = []
         if asset_statuses is None:
-            asset_statuses = {}
+            asset_statuses = live_statuses_snap
 
         for sym in symbols[:14]:
             tag = f"#{sym.upper()}"
@@ -448,7 +565,7 @@ class AutoTrafficPublisher:
                 if win_rate is not None
                 else f"• <b>Efectividad Operativa:</b> muestra insuficiente ({num_trades} ejecuciones; mínimo {MIN_TRADES_FOR_STATS} para publicar estadísticas)"
             ),
-            "• <b>Salvaguarda Activa:</b> Límite Fiduciario Drawdown -6.4% (Operativa Normal)\n",
+            f"• <b>Salvaguarda Activa:</b> Límite Fiduciario Drawdown -6.4% ({cb_status_text})\n",
             "📈 <b>CONTEXTO MACRO & SENTIMIENTO</b>",
             f"• <b>Bitcoin (#BTC):</b> <code>${btc_price:,.2f}</code> (<b>{btc_chg:+.2f}%</b>)",
             f"• <b>Sentimiento Institucional:</b> <i>{sent_label} (FinBERT: {sent_score:+.2f})</i>\n",
@@ -460,7 +577,7 @@ class AutoTrafficPublisher:
         ]
 
         msg = "\n".join(lines)
-        return self.notifier.send(msg, category="buys")
+        return self.notifier.send(msg, category="tearsheet")
 
     def publish_market_pulse(self) -> bool:
         """Genera y publica un informe diario con las criptomonedas más rentables del momento."""

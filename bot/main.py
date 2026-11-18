@@ -1208,6 +1208,8 @@ class LiveTrader:
             entry_price=entry_ref,
             stop_price=stop,
             fee_rate=self.cfg.fee_rate,
+            vol_ratio=vol_ratio,
+            atr_pct=(atr_value / entry_ref if entry_ref > 0 else None),
         )
         quote_cap = min(self.cash, self.cfg.live_max_quote_per_trade)
         if quote_free > 0:
@@ -2644,7 +2646,12 @@ def _ibkr_step(client, base_cfg: BotConfig, symbol: str, strategy, risk, last_cl
 
     cash = client.account_cash_usd()
     qty = risk.position_size(
-        equity=cash, entry_price=entry_ref, stop_price=stop, fee_rate=base_cfg.fee_rate
+        equity=cash,
+        entry_price=entry_ref,
+        stop_price=stop,
+        fee_rate=base_cfg.fee_rate,
+        vol_ratio=vol_ratio,
+        atr_pct=(atr_value / entry_ref if entry_ref > 0 else None),
     )
     quote_cap = min(cash, base_cfg.live_max_quote_per_trade)
     qty = min(qty, quote_cap / entry_ref)

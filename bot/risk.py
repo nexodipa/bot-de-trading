@@ -153,6 +153,37 @@ def evaluate_drawdown_lock(
     return True, CircuitBreakerStatus.NORMAL.value
 
 
+def compute_volatility_scale(
+    vol_ratio: float | None = None,
+    atr_pct: float | None = None,
+    target_atr_pct: float = 0.025,
+) -> float:
+    """Computes institutional target-volatility position sizing multiplier in [0.50, 1.25].
+
+    Reduces risk exposure during volatility spikes (vol_ratio >= 1.5 or elevated atr_pct)
+    and modestly scales up during calm compression (vol_ratio <= 0.85), always bounded.
+    """
+    scales: list[float] = []
+
+    if vol_ratio is not None and math.isfinite(vol_ratio) and vol_ratio > 0:
+        if vol_ratio >= 2.0:
+            scales.append(0.50)
+        elif vol_ratio >= 1.5:
+            scales.append(0.75)
+        elif vol_ratio <= 0.85:
+            scales.append(1.15)
+        else:
+            scales.append(1.0)
+
+    if atr_pct is not None and math.isfinite(atr_pct) and atr_pct > 0 and target_atr_pct > 0:
+        target_scale = min(max(target_atr_pct / atr_pct, 0.50), 1.25)
+        scales.append(target_scale)
+
+    if not scales:
+        return 1.0
+    return min(max(min(scales), 0.50), 1.25)
+
+
 def validate_volatility_regime(
     klines_df: pd.DataFrame,
     max_ratio: float = 3.0,
@@ -580,8 +611,11 @@ class RiskManager:
         entry_price: float,
         stop_price: float,
         fee_rate: float,
+        vol_ratio: float | None = None,
+        atr_pct: float | None = None,
     ) -> float:
-        risk_budget = equity * self.cfg.risk_per_trade
+        vol_scale = compute_volatility_scale(vol_ratio=vol_ratio, atr_pct=atr_pct)
+        risk_budget = equity * self.cfg.risk_per_trade * vol_scale
         risk_per_unit = abs(entry_price - stop_price) + (entry_price * fee_rate * 2)
         if risk_per_unit <= 0:
             return 0.0
