@@ -227,16 +227,21 @@ class TestRigorousAuditFixes(unittest.TestCase):
             thesis="Ruptura técnica con volumen verificado. Wallet: TYDzsYocNCWiSCxZ5B29Y5c26q9wR18W3X",
         )
         compliant = enforce_square_community_compliance(raw_setup)
-        self.assertNotIn("https://", compliant)
-        self.assertNotIn("github.io", compliant)
-        self.assertNotIn("@AdminVIPSignals", compliant)
-        self.assertNotIn("/subscribe", compliant)
-        self.assertNotIn("Telegram", compliant)
+        for text_to_check in (raw_setup, compliant):
+            self.assertNotIn("https://", text_to_check)
+            self.assertNotIn("github.io", text_to_check)
+            self.assertNotIn("@AdminVIPSignals", text_to_check)
+            self.assertNotIn("/subscribe", text_to_check)
+            self.assertNotIn("Telegram", text_to_check)
         self.assertNotIn("TYDzsYocNCWiSCxZ5B29Y5c26q9wR18W3X", compliant)
         self.assertIn("no constituye asesoramiento financiero", compliant.lower())
-        # Max 3 hashtags
+        self.assertNotIn("CryptoTrading", compliant)
+        self.assertNotIn("ArcaFid", compliant)
+        # Max 3 hashtags and <= 2 unique $COIN cashtags
         import re
+        self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", raw_setup)), 3)
         self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", compliant)), 3)
+        self.assertLessEqual(len(set(re.findall(r"\$([A-Z0-9]{2,10})\b", compliant))), 2)
 
         # Test 30023 Circuit Breaker
         cfg = BotConfig(

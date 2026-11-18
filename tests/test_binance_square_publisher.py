@@ -68,9 +68,9 @@ class TestPostArchetypeRendering(unittest.TestCase):
         self.assertIsInstance(post, str)
         self.assertTrue(len(post) > 50, "Post should not be empty")
 
-        # Invariant 1: Symbol & Action present
-        self.assertIn("SOLUSDT", post)
-        self.assertTrue(any(act in post.upper() for act in ["BUY", "COMPRA", "LONG"]))
+        # Invariant 1: Symbol & directional bias present
+        self.assertIn("$SOL", post)
+        self.assertTrue(any(act in post.upper() for act in ["ALCISTA", "LONG", "COMPRA", "BUY"]))
 
         # Invariant 2: Execution levels (Entry, TP1, TP2, TP3, SL) present with formatted values
         self.assertIn("145.50", post)
@@ -79,15 +79,10 @@ class TestPostArchetypeRendering(unittest.TestCase):
         self.assertIn("153.50", post)
         self.assertIn("158.60", post)
 
-        # Invariant 3: Risk/Reward ratio >= 1:2.5 represented
+        # Invariant 3: Exact Risk/Reward ratio represented
         rr_matches = re.findall(r"1\s*:\s*(\d+(?:\.\d+)?)", post)
-        if rr_matches:
-            self.assertGreaterEqual(float(rr_matches[0]), 2.5, f"R:R ratio must be >= 1:2.5, found {rr_matches[0]}")
-        else:
-            self.assertTrue(
-                any(t in post for t in ["1:2.5", "1:2.6", "1:2.7", "1:2.8", "1:3", "R:R", "R/R", "Ratio"]),
-                f"Risk/Reward ratio representation missing in post: {post}"
-            )
+        self.assertTrue(rr_matches, f"Risk/Reward ratio missing in post: {post}")
+        self.assertGreaterEqual(float(rr_matches[0]), 2.5, f"R:R ratio must be >= 2.5 here, found {rr_matches[0]}")
 
         # Invariant 4: Quantitative score >= 0.72 represented
         self.assertTrue(
@@ -95,15 +90,22 @@ class TestPostArchetypeRendering(unittest.TestCase):
             f"Composite score indicator missing in setup alert: {post}"
         )
 
-        # Invariant 5: Conversion CTAs & tags present
-        self.assertIn("@AdminVIPSignals", post)
-        self.assertIn("/subscribe", post)
-        self.assertIn("https://nexodipa.github.io/bot-de-trading/", post)
+        # Invariant 5: Zero external CTAs/URLs + native compliance tags & DYOR
+        self.assertNotIn("@AdminVIPSignals", post)
+        self.assertNotIn("/subscribe", post)
+        self.assertNotIn("github.io", post)
+        self.assertNotIn("https://", post)
         self.assertIn("#BinanceSquare", post)
         self.assertIn("#TradingCuantitativo", post)
+        self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", post)), 3)
+        cashtags = set(re.findall(r"\$(?!\d+[KMBT]?\b)((?:[0-9]{1,5})?[A-Z]{2,10}(?:[0-9]{1,3})?)\b", post))
+        self.assertLessEqual(len(cashtags), 2)
+        self.assertIn("?", post)
+        self.assertIn("Proyecto Fehu", post)
+        self.assertIn("no constituye asesoramiento financiero", post.lower())
 
     def test_render_archetype_2_daily_macro_report(self) -> None:
-        """Archetype 2: Daily Macro & Market Report (BTC summary, top gainers, FinBERT, institutional flow)."""
+        """Archetype 2: Daily Macro & Market Report (BTC summary, top gainers, truthful RSS sentiment)."""
         gainers = [
             {"symbol": "SOLUSDT", "price": 145.50, "change_pct": 8.24, "quote_volume": 45000000.0},
             {"symbol": "AVAXUSDT", "price": 28.40, "change_pct": 5.12, "quote_volume": 18000000.0},
@@ -123,27 +125,35 @@ class TestPostArchetypeRendering(unittest.TestCase):
         self.assertTrue("64,250" in post or "64250" in post, "BTC price missing or unformatted")
         self.assertIn("3.45", post, "BTC change percent missing")
 
-        # Invariant 2: Top gainers ranking rendered
-        self.assertIn("SOLUSDT", post)
-        self.assertIn("AVAXUSDT", post)
+        # Invariant 2: Top gainers ranking rendered cleanly within <= 2 cashtag cap
+        self.assertIn("$SOL", post)
+        self.assertIn("AVAX", post)
+        self.assertNotIn("#AVAXUSDT", post)
         self.assertTrue("8.24" in post or "8.2" in post)
+        cashtags = set(re.findall(r"\$(?!\d+[KMBT]?\b)((?:[0-9]{1,5})?[A-Z]{2,10}(?:[0-9]{1,3})?)\b", post))
+        self.assertLessEqual(len(cashtags), 2)
 
-        # Invariant 3: Sentiment & institutional thesis present
+        # Invariant 3: Truthful RSS sentiment & institutional thesis present (no false FinBERT claim)
+        self.assertNotIn("FinBERT", post)
         self.assertTrue(
-            any(term in post for term in ["ALCISTA", "0.68", "FinBERT", "Sentimiento"]),
-            "FinBERT sentiment representation missing"
+            any(term in post for term in ["ALCISTA", "0.68", "Sentimiento", "RSS"]),
+            "Sentiment attribution representation missing"
         )
         self.assertIn("Flujo institucional", post)
 
-        # Invariant 4: Mandatory CTAs & hashtags present
-        self.assertIn("@AdminVIPSignals", post)
-        self.assertIn("/subscribe", post)
-        self.assertIn("https://nexodipa.github.io/bot-de-trading/", post)
+        # Invariant 4: Zero external CTAs/URLs + native compliance tags & closing question
+        self.assertNotIn("@AdminVIPSignals", post)
+        self.assertNotIn("/subscribe", post)
+        self.assertNotIn("github.io", post)
+        self.assertNotIn("https://", post)
         self.assertIn("#Bitcoin", post)
         self.assertIn("#BinanceSquare", post)
+        self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", post)), 3)
+        self.assertIn("?", post)
+        self.assertIn("no constituye asesoramiento financiero", post.lower())
 
     def test_render_archetype_3_audited_performance(self) -> None:
-        """Archetype 3: Audited Performance Report (Win Rate 78.5%, Profit Factor, -6.4% drawdown lock)."""
+        """Archetype 3: Audited Performance Report (Win Rate 55.0%, Profit Factor, -6.4% drawdown lock)."""
         post = BinanceSquareContentGenerator.generate_audited_performance_report(
             win_rate_pct=55.0,
             profit_factor=1.40,
@@ -158,12 +168,16 @@ class TestPostArchetypeRendering(unittest.TestCase):
             self.assertIn(needle, post)
         self.assertIn("no garantiza", post.lower())
 
-        # Invariant 3: Conversion CTAs & hashtags present
-        self.assertIn("@AdminVIPSignals", post)
-        self.assertIn("/subscribe", post)
-        self.assertIn("https://nexodipa.github.io/bot-de-trading/", post)
-        self.assertIn("#ArcaFid", post)
+        # Invariant 3: Sober branding, native tags, zero external CTAs
+        self.assertNotIn("@AdminVIPSignals", post)
+        self.assertNotIn("/subscribe", post)
+        self.assertNotIn("github.io", post)
+        self.assertNotIn("https://", post)
+        self.assertIn("Proyecto Fehu", post)
         self.assertIn("#BinanceSquare", post)
+        self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", post)), 3)
+        self.assertIn("?", post)
+        self.assertIn("no constituye asesoramiento financiero", post.lower())
 
     def test_dynamic_numeric_precision_and_formatting(self) -> None:
         """Dynamic numeric formatting: cleanly formats prices, small tokens, and percentage variations."""
@@ -185,14 +199,14 @@ class TestPostArchetypeRendering(unittest.TestCase):
 
 
 class TestContentFormattingAndLimits(unittest.TestCase):
-    """Test suite for R2: Character count (< 2,000 chars), HTML stripping, and CTA embedder."""
+    """Test suite for R2: Character count (< 2,000 chars), HTML stripping, compliance & tag ceilings."""
 
     def setUp(self) -> None:
         if BinanceSquareContentGenerator is None:
             self.skipTest("BinanceSquareContentGenerator not yet implemented")
 
     def test_character_count_strictly_under_2000(self) -> None:
-        """All 3 archetypes must remain strictly under 2,000 characters (max 1950 target)."""
+        """All 5 archetypes must remain strictly under 2,000 characters (max 1950 target)."""
         verbose_gainers = [
             {"symbol": f"COIN{i}USDT", "price": 10.0 * i, "change_pct": 5.0 + i, "quote_volume": 10000000.0 * i}
             for i in range(1, 9)
@@ -212,8 +226,16 @@ class TestContentFormattingAndLimits(unittest.TestCase):
         p3 = BinanceSquareContentGenerator.generate_audited_performance_report(
             win_rate_pct=78.5, profit_factor=2.65, drawdown_lock_pct=-6.4, sharpe_ratio=2.42, total_trades=142
         )
+        p4 = BinanceSquareContentGenerator.generate_trade_close_post(
+            symbol="SOLUSDT", exit_price=154.25, pnl_pct=4.85, pnl_usdt=48.50,
+            reason="take_profit", sentiment_label="Alcista", sentiment_score=0.40, entry_price=147.10,
+        )
+        p5 = BinanceSquareContentGenerator.generate_recalibration_note(
+            tuned_summary=["#BTCUSDT: Estructura Adaptativa (SL: 1.8x ATR | Target R:R: 2.2)"],
+            sentiment_label="Neutral", sentiment_score=0.05, symbols=["BTCUSDT", "ETHUSDT"],
+        )
 
-        for idx, post in enumerate([p1, p2, p3], start=1):
+        for idx, post in enumerate([p1, p2, p3, p4, p5], start=1):
             self.assertLess(
                 len(post), 2000,
                 f"Archetype {idx} exceeds Binance Square 2000-character ceiling: {len(post)} chars"
@@ -224,10 +246,12 @@ class TestContentFormattingAndLimits(unittest.TestCase):
             )
 
     def test_absence_of_unsupported_html_tags(self) -> None:
-        """Rendered output must contain 0% forbidden HTML tags (<b>, <code>, <pre>, <i>, <a>, <div>)."""
+        """Rendered output must contain 0% forbidden HTML tags and strip external URLs on compliance."""
+        from bot.binance_square import enforce_square_community_compliance
+
         html_input_thesis = (
             "<b>Alerta institucional:</b> <pre><code>entry: 100</code></pre>. "
-            "Consulte <a href='https://example.com'>detalles</a> en <i>ArcaFid</i>."
+            "Consulte <a href='https://example.com'>detalles</a> en <i>mesa técnica</i>."
         )
         post = BinanceSquareContentGenerator.generate_quant_setup_post(
             symbol="ETHUSDT", action="BUY", entry_price=3500.0, stop_price=3400.0,
@@ -235,12 +259,14 @@ class TestContentFormattingAndLimits(unittest.TestCase):
             thesis=html_input_thesis
         )
 
-        forbidden_tags = ["<b", "</b>", "<code", "</code>", "<pre", "</pre>", "<i", "</i>", "<a ", "</a>", "<div", "</div>"]
+        forbidden_tags = ["<b", "</b>", "<code", "</code>", "<pre", "</pre>", "<i", "</i>", "<a ", "</a>", "<div", "</div>", "**"]
         for tag in forbidden_tags:
-            self.assertNotIn(tag, post, f"Disallowed HTML tag '{tag}' found in rendered post")
+            self.assertNotIn(tag, post, f"Disallowed HTML/Markdown tag '{tag}' found in rendered post")
+        compliant = enforce_square_community_compliance(post)
+        self.assertNotIn("https://example.com", compliant)
 
-    def test_mandatory_conversion_ctas_present(self) -> None:
-        """All posts must contain mandatory CTAs: Telegram VIP (@AdminVIPSignals, /subscribe) & Web Portal URL."""
+    def test_zero_external_ctas_and_urls_in_all_archetypes(self) -> None:
+        """All 5 archetypes must have zero external CTAs/URLs/hype emojis and include DYOR + closing question."""
         p1 = BinanceSquareContentGenerator.generate_quant_setup_post(
             symbol="SOLUSDT", action="BUY", entry_price=145.0, stop_price=140.0,
             tp1=150.0, tp2=155.0, tp3=160.0, composite_score=0.75
@@ -252,30 +278,44 @@ class TestContentFormattingAndLimits(unittest.TestCase):
         p3 = BinanceSquareContentGenerator.generate_audited_performance_report(
             win_rate_pct=55.0, profit_factor=1.4, drawdown_lock_pct=-4.0, sharpe_ratio=0.3, total_trades=40
         )
+        p4 = BinanceSquareContentGenerator.generate_trade_close_post(
+            symbol="BTCUSDT", exit_price=59000.0, pnl_pct=-1.67, reason="stop_loss"
+        )
+        p5 = BinanceSquareContentGenerator.generate_recalibration_note(
+            tuned_summary=["BTCUSDT: Ruptura de Canal (SL: 1.8x ATR | Target R:R: 2.2)"],
+            symbols=["BTCUSDT"]
+        )
 
-        for idx, post in enumerate([p1, p2, p3], start=1):
-            self.assertIn("@AdminVIPSignals", post, f"Telegram VIP handle missing in Archetype {idx}")
-            self.assertIn("/subscribe", post, f"Telegram command /subscribe missing in Archetype {idx}")
-            self.assertIn("https://nexodipa.github.io/bot-de-trading/", post, f"Web portal link missing in Archetype {idx}")
+        banned = ["@AdminVIPSignals", "/subscribe", "github.io", "https://", "http://", "Telegram", "WhatsApp", "Discord", "**", "🚀", "🔥", "💎", "ArcaFid", "FinBERT", "muy limpia", "oportunidad"]
+        for idx, post in enumerate([p1, p2, p3, p4, p5], start=1):
+            for term in banned:
+                self.assertNotIn(term, post, f"Forbidden term '{term}' found in Archetype {idx}")
+            self.assertIn("no constituye asesoramiento financiero", post.lower(), f"DYOR missing in Archetype {idx}")
+            self.assertIn("?", post, f"Closing analytical question missing in Archetype {idx}")
 
-    def test_strategic_hashtags_present(self) -> None:
-        """All posts must include the 5 strategic hashtags for algorithmic reach."""
-        required_hashtags = ["#BinanceSquare", "#TradingCuantitativo", "#Bitcoin", "#CryptoTrading", "#ArcaFid"]
+    def test_hashtag_and_cashtag_ceilings_in_generator_outputs(self) -> None:
+        """Generated posts must respect <=3 hashtags and <=2 unique $COIN cashtags without orphan words."""
         p1 = BinanceSquareContentGenerator.generate_quant_setup_post(
             symbol="BNBUSDT", action="BUY", entry_price=580.0, stop_price=570.0,
             tp1=595.0, tp2=610.0, tp3=630.0, composite_score=0.76
         )
-        for tag in required_hashtags:
-            self.assertIn(tag, p1, f"Hashtag '{tag}' missing in rendered post")
+        hashtags = re.findall(r"#[a-zA-Z0-9_]+", p1)
+        cashtags = set(re.findall(r"\$([A-Z0-9]{2,10})\b", p1))
+        self.assertIn("#BinanceSquare", p1)
+        self.assertGreaterEqual(len(hashtags), 1)
+        self.assertLessEqual(len(hashtags), 3)
+        self.assertLessEqual(len(cashtags), 2)
+        self.assertNotIn("CryptoTrading ArcaFid", p1)
 
     def test_boundary_truncation_safety(self) -> None:
-        """Boundary truncation safely limits oversized content (<1950 chars) without corrupting CTAs."""
+        """Boundary truncation safely limits oversized content (<=1950 chars) preserving DYOR & hashtags."""
+        from bot.binance_square import enforce_square_community_compliance
+
         cleaner = sanitize_for_square
         if cleaner is None:
-            # Fallback to class method if present
             cleaner = getattr(BinanceSquareContentGenerator, "sanitize_text", None)
         if cleaner is None:
-            publisher = BinanceSquarePublisher(BotConfig())
+            publisher = BinanceSquarePublisher(BotConfig(event_db_path=":memory:"))
             cleaner = getattr(publisher, "sanitize_text", None)
 
         if cleaner is None:
@@ -283,14 +323,17 @@ class TestContentFormattingAndLimits(unittest.TestCase):
 
         huge_text = (
             "Análisis cuantitativo de alta frecuencia con algoritmos de optimización. " * 80
-            + "\n\n📲 Canal VIP & Señales Cuantitativas: @AdminVIPSignals (Comando /subscribe)"
-            + "\n🏛️ Portal Institucional & Simulador Actuarial: https://nexodipa.github.io/bot-de-trading/"
-            + "\n#BinanceSquare #TradingCuantitativo #Bitcoin #CryptoTrading #ArcaFid"
+            + "\n\n— Proyecto Fehu (ᚠ) Quantitative | Análisis informativo (DYOR), no constituye asesoramiento financiero."
+            + "\n#TradingCuantitativo #GestionDeRiesgo #BinanceSquare"
         )
         sanitized = cleaner(huge_text, max_chars=1950)
         self.assertLessEqual(len(sanitized), 1950)
-        self.assertIn("@AdminVIPSignals", sanitized)
-        self.assertIn("https://nexodipa.github.io/bot-de-trading/", sanitized)
+        self.assertIn("#BinanceSquare", sanitized)
+        self.assertIn("no constituye asesoramiento financiero", sanitized.lower())
+        compliant = enforce_square_community_compliance(sanitized)
+        self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", compliant)), 3)
+        self.assertNotIn("@AdminVIPSignals", compliant)
+        self.assertNotIn("github.io", compliant)
 
 
 class TestOpenAPINetworkMocking(unittest.TestCase):
@@ -452,10 +495,17 @@ class TestOpenAPINetworkMocking(unittest.TestCase):
 class TestGracefulDegradation(unittest.TestCase):
     """Test suite for R2 & Acceptance Criteria: Graceful standby / simulation degradation."""
 
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self._tmpdir.name, "degradation_test.sqlite3")
+
+    def tearDown(self) -> None:
+        self._tmpdir.cleanup()
+
     @patch("requests.post")
     def test_degradation_when_api_key_empty(self, mock_post: MagicMock) -> None:
         """When binance_square_api_key is empty string, service is disabled; 0 network calls sent."""
-        cfg = BotConfig(binance_square_enabled=True, binance_square_api_key="")
+        cfg = BotConfig(binance_square_enabled=True, binance_square_api_key="", event_db_path=self.db_path)
         publisher = BinanceSquarePublisher(cfg)
 
         self.assertFalse(publisher.enabled)
@@ -466,7 +516,7 @@ class TestGracefulDegradation(unittest.TestCase):
     @patch("requests.post")
     def test_degradation_when_service_disabled(self, mock_post: MagicMock) -> None:
         """When binance_square_enabled is False, publish_post returns False immediately; 0 network calls."""
-        cfg = BotConfig(binance_square_enabled=False, binance_square_api_key="valid_key")
+        cfg = BotConfig(binance_square_enabled=False, binance_square_api_key="valid_key", event_db_path=self.db_path)
         publisher = BinanceSquarePublisher(cfg)
 
         self.assertFalse(publisher.enabled)
@@ -474,28 +524,27 @@ class TestGracefulDegradation(unittest.TestCase):
         self.assertFalse(res)
         mock_post.assert_not_called()
 
-    def test_degradation_default_config_safe(self) -> None:
+    @patch("requests.post")
+    def test_degradation_default_config_safe(self, mock_post: MagicMock) -> None:
         """Default BotConfig initializes with binance_square_enabled=False safely without exceptions."""
-        cfg = BotConfig()
+        cfg = BotConfig(event_db_path=self.db_path)
         self.assertFalse(cfg.binance_square_enabled)
 
         publisher = BinanceSquarePublisher(cfg)
         self.assertFalse(publisher.enabled)
         self.assertFalse(publisher.publish_post("Safe test"))
+        mock_post.assert_not_called()
 
 
 class TestRateLimitingAndScheduling(unittest.TestCase):
     """Test suite for R3: SquareRateLimiter cooldowns, hourly ceilings, and HTTP 429 backoff."""
 
     def setUp(self) -> None:
-        self.db_path = f"test_rate_limit_{uuid.uuid4().hex[:8]}.sqlite3"
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self._tmpdir.name, "rate_limit.sqlite3")
 
     def tearDown(self) -> None:
-        if os.path.exists(self.db_path):
-            try:
-                os.remove(self.db_path)
-            except Exception:
-                pass
+        self._tmpdir.cleanup()
 
     def test_rate_limiter_blocks_rapid_spam(self) -> None:
         """Rate limiter permits initial post, blocks immediate second post within cooldown window."""
@@ -552,10 +601,11 @@ class TestRateLimitingAndScheduling(unittest.TestCase):
 
 
 class TestSQLiteTelemetryLogging(unittest.TestCase):
-    """Test suite for R3: SQLite 'events' logging in bot_events.sqlite3."""
+    """Test suite for R3: SQLite 'events' logging in temp SQLite DB."""
 
     def setUp(self) -> None:
-        self.db_path = f"test_telemetry_{uuid.uuid4().hex[:8]}.sqlite3"
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self._tmpdir.name, "test_telemetry.sqlite3")
         self.cfg = BotConfig(
             binance_square_enabled=True,
             binance_square_api_key="test_key_sqlite",
@@ -563,11 +613,7 @@ class TestSQLiteTelemetryLogging(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        if os.path.exists(self.db_path):
-            try:
-                os.remove(self.db_path)
-            except Exception:
-                pass
+        self._tmpdir.cleanup()
 
     @patch("requests.post")
     def test_successful_publication_logged_to_sqlite(self, mock_post: MagicMock) -> None:
@@ -602,8 +648,9 @@ class TestSQLiteTelemetryLogging(unittest.TestCase):
         finally:
             conn.close()
 
+    @patch("time.sleep", return_value=None)
     @patch("requests.post")
-    def test_failed_publication_logged_to_sqlite(self, mock_post: MagicMock) -> None:
+    def test_failed_publication_logged_to_sqlite(self, mock_post: MagicMock, _mock_sleep: MagicMock) -> None:
         """Failed post records failure telemetry in SQLite 'events' table."""
         mock_resp = MagicMock()
         mock_resp.status_code = 500
@@ -656,10 +703,14 @@ class TestSQLiteTelemetryLogging(unittest.TestCase):
 
 class TestAsyncWorkerExecution(unittest.TestCase):
     """Architectural test class representing the asynchronous non-blocking worker pipeline.
-    
+
     Verifies that publisher components can be scheduled and executed without blocking
     the real-time trading loop (R3 & M3).
     """
+
+    def tearDown(self) -> None:
+        from bot.growth_traffic_engine import reset_square_worker
+        reset_square_worker()
 
     def test_mathematical_expressions_preserved_in_sanitizer(self) -> None:
         """Sanitizer must preserve mathematical inequalities (< -6.4%, > 2.0, < $50k) while stripping HTML."""
@@ -681,13 +732,13 @@ class TestAsyncWorkerExecution(unittest.TestCase):
         from bot.growth_traffic_engine import enqueue_square_post
         with patch("bot.growth_traffic_engine.get_square_worker", return_value=None):
             with patch("bot.binance_square.BinanceSquarePublisher.publish_post") as mock_pub:
-                cfg = BotConfig(binance_square_enabled=True, binance_square_api_key="valid_key")
+                cfg = BotConfig(binance_square_enabled=True, binance_square_api_key="valid_key", event_db_path=":memory:")
                 result = enqueue_square_post("Test post", cfg=cfg)
                 self.assertFalse(result)
                 mock_pub.assert_not_called()
 
     def test_auto_tune_cycle_enqueues_square_post(self) -> None:
-        """Auto tune cycle must enqueue summary asynchronously instead of calling publish_post synchronously."""
+        """Auto tune cycle must enqueue compliant recalibration note with allow_network=False."""
         from bot.main import run_auto_tune_cycle
         cfg = BotConfig(
             auto_tune_enabled=True,
@@ -697,30 +748,34 @@ class TestAsyncWorkerExecution(unittest.TestCase):
             active_symbols="BTCUSDT",
         )
         mock_telemetry = MagicMock()
+        mock_df = MagicMock()
+        mock_df.empty = False
+        mock_df.__len__ = MagicMock(return_value=120)
+        candidate = {
+            "score": 1.25,
+            "metrics": {"roi_pct": 4.2, "profit_factor": 1.45, "num_trades": 12},
+            "params": {"strategy_mode": "connors_rsi", "stop_atr_mult": 1.8, "take_profit_rr": 2.2},
+        }
         with patch("bot.growth_traffic_engine.enqueue_square_post") as mock_enqueue:
-            with patch("bot.binance_square.BinanceSquarePublisher.publish_post") as mock_pub:
-                with patch("bot.main.BinanceDataClient"):
-                    with patch("bot.optimizer.optimize_config", return_value=[]):
-                        with patch("bot.news_sentiment.NewsSentimentAnalyzer.get_sentiment", return_value=(0.25, [{"title": "Market Rally"}])):
-                            # Simulate existing tuned summary
+            with patch("bot.binance_square.BinanceSquarePublisher.publish_post"):
+                with patch("bot.main.BinanceDataClient") as mock_data_cls:
+                    mock_data_cls.return_value.get_klines.return_value = mock_df
+                    with patch("bot.optimizer.optimize_config", return_value=[candidate]):
+                        with patch("bot.news_sentiment.NewsSentimentAnalyzer.get_sentiment", return_value=(0.25, [{"title": "Market Rally"}])) as mock_sent:
                             with patch("bot.main.get_db_session") as mock_get_session:
                                 mock_session = MagicMock()
                                 mock_session.query.return_value.filter.return_value.first.return_value = None
                                 mock_get_session.return_value = mock_session
-                                
-                                # Directly test the publishing block if run_auto_tune_cycle completes
-                                from bot.growth_traffic_engine import enqueue_square_post as real_enqueue
-                                # Call with empty candidates will finish cycle cleanly
-                                run_auto_tune_cycle(cfg, mock_telemetry)
 
-        # Also directly verify that enqueue_square_post accepts is_priority=False and metadata
-        with patch("bot.growth_traffic_engine.get_square_worker") as mock_gw:
-            mock_worker = MagicMock()
-            mock_worker.running = True
-            mock_worker.enqueue.return_value = True
-            mock_gw.return_value = mock_worker
-            res = mock_gw.return_value.enqueue({"text": "msg", "is_priority_alert": False, "metadata": {"archetype": "recalibration_summary"}})
-            self.assertTrue(res)
+                                run_auto_tune_cycle(cfg, mock_telemetry)
+                                mock_sent.assert_called_once_with(allow_network=False)
+                                self.assertTrue(mock_enqueue.called)
+                                enqueued_msg = mock_enqueue.call_args[0][0]
+                                self.assertIn("$BTC", enqueued_msg)
+                                self.assertNotIn("Market Rally", enqueued_msg)
+                                self.assertNotIn("Buy the Dip", enqueued_msg)
+                                self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", enqueued_msg)), 3)
+                                self.assertEqual(mock_enqueue.call_args[1].get("is_priority"), False)
 
     def test_live_event_to_square_avoids_cold_network_fetch(self) -> None:
         """_publish_live_event_to_square must not perform cold 15s network fetch on live trading thread."""
@@ -733,9 +788,374 @@ class TestAsyncWorkerExecution(unittest.TestCase):
                     "BTCUSDT",
                     {"event": "live_buy", "price": 60000.0, "stop": 59000.0, "take": 63000.0}
                 )
-                # fetch_latest_news must NOT be invoked synchronously
                 mock_fetch.assert_not_called()
                 self.assertTrue(mock_enqueue.called)
+
+    def test_live_buy_score_gating_rejects_below_min_score(self) -> None:
+        """_publish_live_event_to_square skips live_buy below binance_square_min_score without clamping."""
+        from bot.main import _publish_live_event_to_square
+        cfg = BotConfig(
+            binance_square_enabled=True,
+            binance_square_api_key="valid_key",
+            binance_square_min_score=0.72,
+            event_db_path=":memory:",
+        )
+        with patch("bot.growth_traffic_engine.enqueue_square_post") as mock_enqueue:
+            _publish_live_event_to_square(
+                cfg,
+                "BTCUSDT",
+                {"event": "live_buy", "price": 60000.0, "stop": 59000.0, "take": 63000.0, "composite_score": 0.55},
+            )
+            mock_enqueue.assert_not_called()
+
+            _publish_live_event_to_square(
+                cfg,
+                "BTCUSDT",
+                {"event": "live_buy", "price": 60000.0, "stop": 59000.0, "take": 63000.0, "composite_score": 0.81},
+            )
+            mock_enqueue.assert_called_once()
+            self.assertIn("0.810", mock_enqueue.call_args[0][0])
+
+    def test_live_sell_uses_trade_close_spanish_formatting(self) -> None:
+        """_publish_live_event_to_square routes live_sell through generate_trade_close_post cleanly."""
+        from bot.main import _publish_live_event_to_square
+        cfg = BotConfig(binance_square_enabled=True, binance_square_api_key="valid_key", event_db_path=":memory:")
+        with patch("bot.growth_traffic_engine.enqueue_square_post") as mock_enqueue:
+            _publish_live_event_to_square(
+                cfg,
+                "BTCUSDT",
+                {"event": "live_sell", "price": 65000.0, "pnl": 1.48, "pnl_pct": 2.32, "reason": "take_profit"},
+            )
+            mock_enqueue.assert_called_once()
+            msg = mock_enqueue.call_args[0][0]
+            self.assertIn("65,000.00", msg)
+            self.assertNotIn("65000.0000", msg)
+            self.assertNotIn("take_profit", msg)
+            self.assertNotIn("@AdminVIPSignals", msg)
+            self.assertNotIn("github.io", msg)
+
+    def test_zero_live_http_guard_blocks_unmocked_requests_post(self) -> None:
+        """Inside unittest runtime without @patch('requests.post'), BinanceSquarePublisher never sends HTTP."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "guard.sqlite3")
+            cfg = BotConfig(
+                binance_square_enabled=True,
+                binance_square_api_key="real_looking_key",
+                binance_square_dry_run=False,
+                event_db_path=db_path,
+            )
+            pub = BinanceSquarePublisher(cfg)
+            with patch("socket.create_connection", side_effect=AssertionError("Network socket must not be opened!")):
+                ok = pub.publish_post("Guard check post")
+            self.assertFalse(ok)
+            con = sqlite3.connect(db_path)
+            try:
+                row = con.execute("SELECT event, payload_json FROM events WHERE mode='binance_square'").fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(row[0], "binance_square_simulation")
+                self.assertEqual(json.loads(row[1]).get("status"), "test_guard_blocked")
+            finally:
+                con.close()
+
+    def test_perform_auto_tuning_active_momentum_no_snake_case(self) -> None:
+        """perform_auto_tuning with strategy_mode='active_momentum' must produce clean Spanish copy with zero snake_case leaks."""
+        from bot.binance_square import enforce_square_community_compliance
+        from bot.main import perform_auto_tuning
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = BotConfig(
+                auto_tune_enabled=True,
+                binance_square_enabled=True,
+                binance_square_api_key="valid_key",
+                event_db_path=os.path.join(td, "autotune_test.sqlite3"),
+                active_symbols="BTCUSDT,ETHUSDT",
+            )
+            mock_telemetry = MagicMock()
+            mock_df = MagicMock()
+            mock_df.empty = False
+            mock_df.__len__ = MagicMock(return_value=120)
+            candidate = {
+                "score": 1.35,
+                "metrics": {"roi_pct": 5.1, "profit_factor": 1.55, "num_trades": 15},
+                "params": {"strategy_mode": "active_momentum", "stop_atr_mult": 1.4, "take_profit_rr": 1.8},
+            }
+            with patch("bot.growth_traffic_engine.enqueue_square_post") as mock_enqueue:
+                with patch("bot.binance_square.BinanceSquarePublisher.publish_post"):
+                    with patch("bot.main.BinanceDataClient") as mock_data_cls:
+                        mock_data_cls.return_value.get_klines.return_value = mock_df
+                        with patch("bot.optimizer.optimize_config", return_value=[candidate]):
+                            with patch(
+                                "bot.news_sentiment.NewsSentimentAnalyzer.get_sentiment",
+                                return_value=(0.12, []),
+                            ) as mock_sent:
+                                with patch("bot.db.get_db_session") as mock_get_session:
+                                    mock_session = MagicMock()
+                                    mock_session.query.return_value.filter.return_value.first.return_value = None
+                                    mock_get_session.return_value = mock_session
+
+                                    perform_auto_tuning(cfg, mock_telemetry)
+                                    mock_sent.assert_called_once_with(allow_network=False)
+                                    self.assertTrue(mock_enqueue.called)
+                                    enqueued_msg = mock_enqueue.call_args[0][0]
+                                    self.assertNotIn("active_momentum", enqueued_msg)
+                                    self.assertIn("Momentum Activo", enqueued_msg)
+                                    self.assertEqual(re.findall(r"\b[a-z]+_[a-z0-9_]+\b", enqueued_msg), [])
+                                    self.assertLessEqual(len(enqueued_msg), 1950)
+                                    self.assertLessEqual(len(set(re.findall(r"\$([A-Z0-9]{2,10})\b", enqueued_msg))), 2)
+                                    self.assertLessEqual(len(re.findall(r"#\w+", enqueued_msg)), 3)
+                                    self.assertIn("no constituye asesoramiento financiero", enqueued_msg.lower())
+                                    self.assertEqual(enforce_square_community_compliance(enqueued_msg), enqueued_msg)
+
+        direct_note = BinanceSquareContentGenerator.generate_recalibration_note(
+            ["• ETH: Estrategia de active_momentum (SL: 1.4x ATR | Ratio R:R objetivo: 1.5)"]
+        )
+        self.assertNotIn("active_momentum", direct_note)
+        self.assertIn("Momentum Activo", direct_note)
+        self.assertEqual(re.findall(r"\b[a-z]+_[a-z0-9_]+\b", direct_note), [])
+        self.assertEqual(enforce_square_community_compliance(direct_note), direct_note)
+
+    def test_target_exit_live_sell_outcome_tag(self) -> None:
+        """live_sell with reason='target_exit' must pass raw reason so outcome_tag renders 'Objetivo asegurado'."""
+        from bot.main import _publish_live_event_to_square
+
+        cfg = BotConfig(binance_square_enabled=True, binance_square_api_key="valid_key", event_db_path=":memory:")
+        with patch("bot.growth_traffic_engine.enqueue_square_post") as mock_enqueue:
+            _publish_live_event_to_square(
+                cfg,
+                "ETHUSDT",
+                {
+                    "event": "live_sell",
+                    "price": 3250.0,
+                    "pnl": 42.5,
+                    "pnl_pct": 2.85,
+                    "reason": "target_exit",
+                    "strategy_mode": "active_momentum",
+                },
+            )
+            mock_enqueue.assert_called_once()
+            post = mock_enqueue.call_args[0][0]
+            self.assertIn("Objetivo asegurado", post)
+            self.assertNotIn("Cierre en positivo", post)
+            self.assertIn("alcance de zona objetivo definida", post)
+            self.assertNotIn("target_exit", post)
+            self.assertIn("Momentum Activo", post)
+
+        direct_close = BinanceSquareContentGenerator.generate_trade_close_post(
+            symbol="ETHUSDT", exit_price=3250.0, pnl_pct=2.85, reason="target_exit"
+        )
+        self.assertIn("Objetivo asegurado", direct_close)
+        self.assertNotIn("Cierre en positivo", direct_close)
+        self.assertIn("alcance de zona objetivo definida", direct_close)
+        self.assertNotIn("target_exit", direct_close)
+
+
+class TestArchetypesAndEditorialQuality(unittest.TestCase):
+    """Tests for honest math, pre-fold hooks, and Archetypes 4 & 5."""
+
+    def test_archetype_1_no_rr_clamping_or_fabrication(self) -> None:
+        post_low_rr = BinanceSquareContentGenerator.generate_quant_setup_post(
+            symbol="SOLUSDT", action="BUY", entry_price=100.0, stop_price=90.0,
+            tp1=105.0, tp2=110.0, tp3=115.0, composite_score=0.76,
+        )
+        self.assertIn("1:1.50", post_low_rr)
+        self.assertNotIn("1:2.50", post_low_rr)
+
+        post_zero_risk = BinanceSquareContentGenerator.generate_quant_setup_post(
+            symbol="SOLUSDT", action="BUY", entry_price=100.0, stop_price=100.0,
+            tp1=105.0, tp2=110.0, tp3=115.0, composite_score=0.76,
+        )
+        self.assertNotIn("1:2.50", post_zero_risk)
+        self.assertIn("n/d", post_zero_risk)
+
+    def test_archetype_1_prefold_hook_and_veteran_tone(self) -> None:
+        post = BinanceSquareContentGenerator.generate_quant_setup_post(
+            symbol="SOLUSDT", action="BUY", entry_price=145.50, stop_price=141.80,
+            tp1=149.10, tp2=153.50, tp3=158.60, composite_score=0.785, timeframe="15m",
+        )
+        first_line = post.splitlines()[0]
+        self.assertLessEqual(len(first_line), 220)
+        self.assertIn("$SOL", first_line)
+        self.assertIn("15m", first_line)
+        self.assertIn("145.50", first_line)
+        self.assertIn("Proyecto Fehu (ᚠ) Quantitative", post)
+        self.assertIn("?", post)
+        for hype in ("🚀", "🔥", "💎", "garantizado", "infalible", "100% seguro", "muy limpia", "oportunidad"):
+            self.assertNotIn(hype, post.lower())
+
+    def test_archetype_4_trade_close_post_profit_and_stop_loss(self) -> None:
+        win_post = BinanceSquareContentGenerator.generate_trade_close_post(
+            symbol="BTCUSDT", exit_price=65000.0, pnl_pct=3.12, reason="take_profit"
+        )
+        loss_post = BinanceSquareContentGenerator.generate_trade_close_post(
+            symbol="SOLUSDT", exit_price=141.20, pnl_pct=-2.15, reason="trend_or_momentum_exit"
+        )
+        for post in (win_post, loss_post):
+            self.assertLessEqual(len(post), 1950)
+            self.assertNotIn("take_profit", post)
+            self.assertNotIn("trend_or_momentum_exit", post)
+            self.assertNotIn("stop_loss", post)
+            self.assertLessEqual(len(set(re.findall(r"\$([A-Z0-9]{2,10})\b", post))), 2)
+            self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", post)), 3)
+            self.assertIn("no constituye asesoramiento financiero", post.lower())
+            self.assertIn("?", post)
+        self.assertIn("65,000.00", win_post)
+
+    def test_archetype_5_recalibration_note(self) -> None:
+        post = BinanceSquareContentGenerator.generate_recalibration_note(
+            tuned_summary=[
+                "• #BTCUSDT: Estrategia de Retroceso en Tendencia (Buy the Dip) (SL: 1.8x ATR | Target R:R: 2.2)",
+                "• #ETHUSDT: Ruptura de Canal (SL: 2.0x ATR | Target R:R: 2.5)",
+                "• #SOLUSDT: Triple Pantalla (SL: 1.6x ATR | Target R:R: 2.0)",
+            ],
+            sentiment_label="Neutral",
+            sentiment_score=0.05,
+        )
+        self.assertLessEqual(len(post), 1950)
+        self.assertNotIn("Buy the Dip", post)
+        self.assertLessEqual(len(set(re.findall(r"\$([A-Z0-9]{2,10})\b", post))), 2)
+        self.assertLessEqual(len(re.findall(r"#[a-zA-Z0-9_]+", post)), 3)
+        self.assertIn("no constituye asesoramiento financiero", post.lower())
+        self.assertIn("?", post)
+
+    def test_adversarial_finbert_arcafid_emojis_hype_scrubbed_cleanly(self) -> None:
+        """Adversarial FinBERT/ArcaFid/hype/URL inputs must be scrubbed cleanly without blank headings or losing R:R note."""
+        from bot.binance_square import enforce_square_community_compliance
+
+        adv_line = "Lectura FinBERT de ArcaFid muy limpia 🚀🔥💎 con enlace https://t.me/vip /subscribe"
+        p_setup = BinanceSquareContentGenerator.generate_quant_setup_post(
+            symbol="SOLUSDT",
+            action="BUY",
+            entry_price=145.0,
+            stop_price=140.0,
+            tp1=150.0,
+            tp2=155.0,
+            tp3=160.0,
+            composite_score=0.80,
+            thesis=adv_line,
+            sentiment_label="FinBERT Alcista 🚀",
+            sentiment_score=0.41,
+        )
+        p_macro = BinanceSquareContentGenerator.generate_macro_market_report(
+            btc_price=64000.0,
+            btc_change_pct=1.8,
+            top_gainers=[],
+            sentiment_label="FinBERT Alcista 🔥",
+            sentiment_score=0.35,
+            macro_summary=adv_line,
+            session_label="Sesión ArcaFid 💎",
+        )
+        p_recal = BinanceSquareContentGenerator.generate_recalibration_note(
+            tuned_summary=[adv_line],
+            sentiment_label="FinBERT Neutral",
+            sentiment_score=0.0,
+            symbols=["BTCUSDT"],
+            market_context=adv_line,
+        )
+        p_close = BinanceSquareContentGenerator.generate_trade_close_post(
+            symbol="BTCUSDT",
+            exit_price=65000.0,
+            pnl_pct=2.1,
+            reason="FinBERT ArcaFid muy limpia 🚀",
+            sentiment_label="FinBERT Alcista",
+            sentiment_score=0.25,
+        )
+        p_digest = BinanceSquareContentGenerator.generate_market_structure_digest(
+            btc_price=64000.0,
+            btc_change_pct=0.5,
+            top_movers=[],
+            sentiment_label="FinBERT Alcista 💎",
+            sentiment_score=0.15,
+        )
+
+        for post in (p_setup, p_macro, p_recal, p_close, p_digest):
+            low = post.lower()
+            for forbidden in ("finbert", "arcafid", "muy limpia", "🚀", "🔥", "💎", "https://", "/subscribe", "rss alcista"):
+                self.assertNotIn(forbidden, low)
+            self.assertEqual(enforce_square_community_compliance(post), post)
+
+        self.assertIn("asimetría", p_setup.lower())
+        self.assertNotRegex(p_setup, r"Lectura cuantitativa \([^)]*\):\n\nMapa técnico:")
+        self.assertNotRegex(p_macro, r"Lectura de mesa:\n\n¿")
+        self.assertNotRegex(p_recal, r"Nota metodológica:\n\n¿")
+
+    def test_quant_setup_sell_wording(self) -> None:
+        """action='SELL' must render bearish wording ('Sesgo bajista', 'zonas inferiores', 'resistencia', 'cierre bajo')."""
+        from bot.binance_square import enforce_square_community_compliance
+
+        post = BinanceSquareContentGenerator.generate_quant_setup_post(
+            symbol="BTCUSDT",
+            action="SELL",
+            entry_price=65000.0,
+            stop_price=66500.0,
+            tp1=63500.0,
+            tp2=62000.0,
+            tp3=60500.0,
+            composite_score=0.80,
+        )
+        self.assertIn("Sesgo bajista", post)
+        self.assertIn("1:3.00", post)
+        self.assertNotIn("zonas superiores", post)
+        self.assertNotIn("sostenga el soporte", post)
+        self.assertNotIn("cierre sobre 63,500.00", post)
+        self.assertEqual(enforce_square_community_compliance(post), post)
+
+    def test_digest_zero_positive_movers(self) -> None:
+        """theme_idx=1 with 0/N positive movers must avoid contradictory 'liderazgo puntual' / 'demanda real' copy."""
+        from bot.binance_square import enforce_square_community_compliance
+
+        post = BinanceSquareContentGenerator.generate_market_structure_digest(
+            btc_price=62000.0,
+            btc_change_pct=-2.5,
+            top_movers=[
+                {"symbol": "ETHUSDT", "change_pct": -3.1},
+                {"symbol": "SOLUSDT", "change_pct": -4.2},
+            ],
+            sentiment_label="Bajista",
+            sentiment_score=-0.35,
+            theme_idx=1,
+        )
+        self.assertIn("0/2", post)
+        self.assertNotIn("liderazgo puntual", post)
+        self.assertNotIn("reciben demanda real", post)
+        self.assertLessEqual(len(set(re.findall(r"\$([A-Z0-9]{2,10})\b", post))), 2)
+        self.assertLessEqual(len(re.findall(r"#\w+", post)), 3)
+        self.assertIn("no constituye asesoramiento financiero", post.lower())
+        self.assertIn("?", post)
+        self.assertEqual(enforce_square_community_compliance(post), post)
+
+    def test_audited_performance_unknown_source_sanitized(self) -> None:
+        """Performance report must map backtest_walkforward and sanitize unknown snake_case/URL sources."""
+        from bot.binance_square import enforce_square_community_compliance
+
+        out_bw = BinanceSquareContentGenerator.generate_audited_performance_report(
+            62.5, 1.85, -3.2, 1.9, 100, source="backtest_walkforward"
+        )
+        out_custom = BinanceSquareContentGenerator.generate_audited_performance_report(
+            62.5, 1.85, -3.2, 1.9, 100, source="custom_raw_snake https://evil.com"
+        )
+        for out in (out_bw, out_custom):
+            self.assertNotIn("backtest_walkforward", out)
+            self.assertNotIn("custom_raw_snake", out)
+            self.assertNotIn("https://", out)
+            self.assertEqual(re.findall(r"\b[a-z]+_[a-z0-9_]+\b", out), [])
+            self.assertEqual(enforce_square_community_compliance(out), out)
+        self.assertIn("walk-forward", out_bw.lower())
+
+    def test_gainer_volume_billion_formatting(self) -> None:
+        """Top gainers with quote_volume >= 1B must format as $X.XXB rather than $1540.0M."""
+        out = BinanceSquareContentGenerator.generate_macro_market_report(
+            btc_price=64000.0,
+            btc_change_pct=2.0,
+            top_gainers=[
+                {"symbol": "ETHUSDT", "price": 3200.0, "change_pct": 4.5, "quote_volume": 1_540_000_000.0},
+                {"symbol": "SOLUSDT", "price": 150.0, "change_pct": 3.2, "quote_volume": 45_000_000.0},
+            ],
+            sentiment_label="Alcista",
+            sentiment_score=0.25,
+        )
+        self.assertIn("$1.54B", out)
+        self.assertNotIn("$1540.0M", out)
+        self.assertIn("$45.0M", out)
 
 
 if __name__ == "__main__":

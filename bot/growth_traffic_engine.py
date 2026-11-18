@@ -18,6 +18,7 @@ from bot.binance_square import (
     BinanceSquareContentGenerator,
     BinanceSquarePublisher,
     SquareRateLimiter,
+    enforce_square_community_compliance,
     sanitize_for_square,
 )
 from bot.config import BotConfig
@@ -33,11 +34,44 @@ __all__ = [
     "BinanceSquarePublisher",
     "SquareRateLimiter",
     "sanitize_for_square",
+    "enforce_square_community_compliance",
     "BinanceSquareWorker",
     "get_square_worker",
+    "reset_square_worker",
     "enqueue_square_post",
     "translate_inactivity_reason",
+    "_summarize_news_themes_es",
 ]
+
+
+def _summarize_news_themes_es(headlines: list[str], score: float) -> str:
+    """Resume temáticamente titulares RSS en español sin interpolar texto crudo en inglés."""
+    joined = " ".join(str(h or "") for h in (headlines or [])).lower()
+    themes: list[str] = []
+    if any(k in joined for k in ("etf", "inflow", "outflow", "institutional", "blackrock", "fidelity", "fund")):
+        themes.append("flujos en productos institucionales y ETF")
+    if any(k in joined for k in ("fed", "rate", "cpi", "inflation", "treasury", "macro", "yield", "fomc")):
+        themes.append("expectativas de tasas macro y liquidez global")
+    if any(k in joined for k in ("sec", "regulat", "policy", "bill", "law", "compliance")):
+        themes.append("frentes regulatorios")
+    if any(k in joined for k in ("liquidation", "futures", "funding", "open interest", "derivatives", "options")):
+        themes.append("posicionamiento en derivados y tasas de fondeo")
+    if any(k in joined for k in ("hack", "exploit", "security", "breach")):
+        themes.append("alertas puntuales de seguridad en protocolos")
+
+    if themes:
+        focus = ", ".join(themes[:2])
+        if score >= 0.15:
+            return f"La agenda informativa reciente gira en torno a {focus}, con tono constructivo aunque sujeto a confirmación en precio."
+        elif score <= -0.15:
+            return f"La agenda informativa reciente refleja cautela por {focus}, lo que refuerza la exigencia de niveles claros de invalidación."
+        return f"La agenda informativa reciente se concentra en {focus}, sin catalizador direccional único."
+
+    if score >= 0.15:
+        return "El flujo informativo reciente mantiene sesgo constructivo moderado sin anomalías de pánico o euforia extrema."
+    elif score <= -0.15:
+        return "El flujo informativo reciente muestra tono defensivo; el foco permanece en la respuesta del volumen sobre soportes."
+    return "El flujo informativo reciente permanece equilibrado y sin catalizadores macro disruptivos."
 
 
 class HuggingFaceSentimentEngine:
@@ -444,8 +478,8 @@ class AutoTrafficPublisher:
         square_interval_sec = max(21600, int(square_hours * 3600))
 
         last_telegram_ts = self._get_persisted_ts("telegram:last_digest_ts")
-        last_square_ts = 0.0
-        square_cycle = 0
+        last_square_ts = self._get_persisted_ts("square:last_post_ts")
+        square_cycle = int(self._get_persisted_ts("square:cycle_idx"))
 
         while self.running:
             try:
@@ -457,15 +491,23 @@ class AutoTrafficPublisher:
                         last_telegram_ts = now
                         self._set_persisted_ts("telegram:last_digest_ts", now)
 
-                # 2. Binance Square: Publicación espaciada con verificación previa de cuarentena 30023
+                # 2. Binance Square: Publicación espaciada persistente con verificación previa de cuarentena y diversidad
                 if self.cfg.binance_square_enabled and (now - last_square_ts >= square_interval_sec):
-                    if square_cycle % 2 == 0:
-                        self.publish_square_macro()
-                    else:
-                        if not self.publish_square_audit():
-                            self.publish_square_macro()
-                    square_cycle += 1
-                    last_square_ts = now
+                    restricted, _ = SquareRateLimiter(
+                        db_path=getattr(self.cfg, "event_db_path", "bot_events.sqlite3")
+                    ).is_restricted()
+                    if not restricted:
+                        if square_cycle % 2 == 0:
+                            enqueued = self.publish_square_macro()
+                        else:
+                            enqueued = self.publish_square_audit() or self.publish_square_structure_digest(
+                                theme_idx=square_cycle // 2
+                            )
+                        if enqueued:
+                            last_square_ts = now
+                            square_cycle += 1
+                            self._set_persisted_ts("square:last_post_ts", now)
+                            self._set_persisted_ts("square:cycle_idx", float(square_cycle))
 
             except Exception as e:
                 logging.warning(f"Error en ciclo de AutoTrafficPublisher: {e}")
@@ -697,7 +739,7 @@ class AutoTrafficPublisher:
             return False
 
     def publish_square_macro(self) -> bool:
-        """Publica el reporte macro diario y ranking de top gainers a Binance Square con diversidad léxica."""
+        """Publica el reporte macro diario y ranking de top gainers a Binance Square sin titulares crudos en inglés."""
         try:
             top = self.screener.get_top_movers(min_volume_usdt=5_000_000.0, top_n=5)
             btc = self.screener.get_btc_macro()
@@ -705,27 +747,32 @@ class AutoTrafficPublisher:
             headlines = sent.get("headlines") or []
             now_utc = datetime.now(timezone.utc)
             session_label = (
-                "sesión asiática" if now_utc.hour < 8
-                else ("sesión europea" if now_utc.hour < 14 else "sesión americana")
+                "Sesión Asiática" if now_utc.hour < 8
+                else ("Sesión Europea" if now_utc.hour < 14 else "Sesión Americana")
             )
             btc_chg = float(btc.get("change_pct", 0.0))
+            sent_score = float(sent.get("score", 0.0))
             flow_tone = (
                 "expansión de demanda en libro de órdenes"
                 if btc_chg > 0.5
                 else ("absorción defensiva en soportes" if btc_chg < -0.5 else "equilibrio de liquidez en rango")
             )
-            hl_note = f" Destaca en la agenda informativa: {headlines[0]}." if headlines else ""
+            thematic_es = _summarize_news_themes_es([str(h) for h in headlines], sent_score)
             macro_summary = (
-                f"Durante la {session_label} ({now_utc.strftime('%d/%m %H:%M UTC')}) observamos {flow_tone}. "
-                f"La gestión de cartera prioriza activos con volumen orgánico verificable y dispersión controlada.{hl_note}"
+                f"En {session_label.lower()} ({now_utc.strftime('%d/%m %H:%M UTC')}) predomina {flow_tone}. "
+                f"La selección de activos prioriza pares con volumen verificable y dispersión controlada. {thematic_es}"
             )
             post = BinanceSquareContentGenerator.generate_macro_market_report(
                 btc_price=float(btc.get("price", 60500.0)),
                 btc_change_pct=btc_chg,
                 top_gainers=top,
                 sentiment_label=str(sent.get("label", "Neutral")),
-                sentiment_score=float(sent.get("score", 0.0)),
+                sentiment_score=sent_score,
                 macro_summary=macro_summary,
+                session_label=session_label,
+                btc_high=float(btc["high"]) if btc.get("high") is not None else None,
+                btc_low=float(btc["low"]) if btc.get("low") is not None else None,
+                btc_volume_usdt=float(btc["volume_usdt"]) if btc.get("volume_usdt") is not None else None,
             )
             return enqueue_square_post(
                 post,
@@ -735,6 +782,32 @@ class AutoTrafficPublisher:
             )
         except Exception as e:
             logging.warning("Error en publish_square_macro: %s", e)
+            return False
+
+    def publish_square_structure_digest(self, theme_idx: int = 0) -> bool:
+        """Publica una síntesis rotativa de estructura de mercado y disciplina de riesgo cuando trades < 30."""
+        try:
+            top = self.screener.get_top_movers(min_volume_usdt=5_000_000.0, top_n=5)
+            btc = self.screener.get_btc_macro()
+            sent = self.sentiment_engine.fetch_latest_sentiment()
+            post = BinanceSquareContentGenerator.generate_market_structure_digest(
+                btc_price=float(btc.get("price", 60500.0)),
+                btc_change_pct=float(btc.get("change_pct", 0.0)),
+                top_movers=top,
+                sentiment_label=str(sent.get("label", "Neutral")),
+                sentiment_score=float(sent.get("score", 0.0)),
+                theme_idx=theme_idx,
+                btc_high=float(btc["high"]) if btc.get("high") is not None else None,
+                btc_low=float(btc["low"]) if btc.get("low") is not None else None,
+            )
+            return enqueue_square_post(
+                post,
+                is_priority=False,
+                metadata={"archetype": "structure_digest", "symbol": "BTCUSDT", "theme_idx": theme_idx},
+                cfg=self.cfg,
+            )
+        except Exception as e:
+            logging.warning("Error en publish_square_structure_digest: %s", e)
             return False
 
     def publish_square_audit(self) -> bool:
@@ -845,7 +918,7 @@ class BinanceSquareWorker:
         while self.running:
             try:
                 try:
-                    task = self.queue.get(timeout=1.0)
+                    task = self.queue.get(timeout=0.2)
                 except queue.Empty:
                     continue
 
@@ -869,10 +942,40 @@ _global_square_worker: BinanceSquareWorker | None = None
 _global_square_worker_lock = threading.Lock()
 
 
-def get_square_worker(cfg: BotConfig | None = None) -> BinanceSquareWorker | None:
-    """Obtiene o inicializa el singleton thread-safe de BinanceSquareWorker."""
+def _worker_cfg_signature(cfg: BotConfig) -> tuple[Any, ...]:
+    return (
+        getattr(cfg, "event_db_path", "bot_events.sqlite3"),
+        bool(getattr(cfg, "binance_square_dry_run", False)),
+        bool(getattr(cfg, "binance_square_enabled", False)),
+        str(getattr(cfg, "binance_square_api_key", "") or ""),
+        int(getattr(cfg, "binance_square_rate_limit_per_hour", 5)),
+        float(getattr(cfg, "binance_square_min_cooldown_minutes", 15)),
+        getattr(cfg, "binance_square_priority_cooldown_seconds", None),
+    )
+
+
+def reset_square_worker() -> None:
+    """Detiene y limpia el singleton global BinanceSquareWorker (útil en teardown/tests)."""
     global _global_square_worker
     with _global_square_worker_lock:
+        worker = _global_square_worker
+        _global_square_worker = None
+    if worker is not None:
+        worker.stop()
+        if worker._thread is not None and worker._thread.is_alive():
+            worker._thread.join(timeout=2.0)
+
+
+def get_square_worker(cfg: BotConfig | None = None) -> BinanceSquareWorker | None:
+    """Obtiene o inicializa el singleton thread-safe de BinanceSquareWorker (re-vincula si cambia cfg de aislamiento)."""
+    global _global_square_worker
+    stale_worker: BinanceSquareWorker | None = None
+    with _global_square_worker_lock:
+        if _global_square_worker is not None and cfg is not None:
+            if _worker_cfg_signature(_global_square_worker.cfg) != _worker_cfg_signature(cfg):
+                stale_worker = _global_square_worker
+                _global_square_worker = BinanceSquareWorker(cfg)
+                _global_square_worker.start()
         if _global_square_worker is None and cfg is not None:
             _global_square_worker = BinanceSquareWorker(cfg)
             _global_square_worker.start()
@@ -881,7 +984,12 @@ def get_square_worker(cfg: BotConfig | None = None) -> BinanceSquareWorker | Non
                 _global_square_worker.start()
             except Exception as exc:
                 logging.warning("No se pudo iniciar BinanceSquareWorker inactivo: %s", exc)
-        return _global_square_worker
+        current = _global_square_worker
+    if stale_worker is not None:
+        stale_worker.stop()
+        if stale_worker._thread is not None and stale_worker._thread.is_alive():
+            stale_worker._thread.join(timeout=2.0)
+    return current
 
 
 def enqueue_square_post(

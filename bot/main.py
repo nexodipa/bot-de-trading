@@ -1083,6 +1083,7 @@ class LiveTrader:
             logging.error(f"Error al analizar sentimiento de noticias en el ciclo: {e}")
 
         # Evaluación simétrica de 5 factores cuantitativos (S_composite >= 0.72)
+        factor_breakdown = None
         try:
             from bot.quant_engine import QuantEngine
             factor_breakdown = QuantEngine.evaluate_setup(
@@ -1468,6 +1469,7 @@ class LiveTrader:
             "stop": stop,
             "take": take,
             "signal_confidence": signal.confidence,
+            "composite_score": round(float(factor_breakdown.composite), 4) if factor_breakdown is not None else None,
             "strategy_mode": self.cfg.strategy_mode,
             "reason": signal.reason,
         }
@@ -1697,18 +1699,24 @@ def perform_auto_tuning(
                 logging.info(f"[{symbol}] Configuración guardada en DB. Parámetros ganadores: {optimal_params}")
                 # Registrar evento
                 telemetry.record("auto_tune", symbol, "optimal_config_saved", payload)
-                mode = optimal_params.get("strategy_mode", "auto")
+                mode = str(optimal_params.get("strategy_mode", "auto") or "auto").strip().lower()
                 stop_atr = optimal_params.get("stop_atr_mult", 1.8)
                 tp_rr = optimal_params.get("take_profit_rr", 2.2)
                 STRATEGY_DESCS = {
+                    "active_momentum": "Momentum Activo y Continuidad",
                     "turtle_breakout": "Ruptura de Canal",
                     "connors_rsi": "Retroceso en Tendencia (Buy the Dip)",
                     "elder_triple": "Triple Pantalla de Elder",
                     "williams_alligator": "Tendencia Alligator",
                     "mean_reversion": "Reversión a la Media (Rango)",
+                    "trend": "Tendencia (Triple Pantalla)",
+                    "breakout": "Ruptura de Rango",
+                    "pullback_trend": "Retroceso en Tendencia",
+                    "trend_following": "Seguimiento de Tendencia",
+                    "pullback": "Retroceso Táctico",
                     "auto": "Estructura Adaptativa"
                 }
-                mode_desc = STRATEGY_DESCS.get(mode, mode)
+                mode_desc = STRATEGY_DESCS.get(mode, mode.replace("_", " ").capitalize())
                 tuned_summary.append(
                     f"• #{symbol}: Estrategia de {mode_desc} (SL: {stop_atr:.1f}x ATR | Target R:R: {tp_rr:.1f})"
                 )
@@ -1755,35 +1763,33 @@ def perform_auto_tuning(
     # Enviar reporte a Binance Square si está activo
     if tuned_summary and cfg.binance_square_enabled:
         try:
+            from bot.binance_square import BinanceSquareContentGenerator
             from bot.growth_traffic_engine import enqueue_square_post
             from bot.news_sentiment import NewsSentimentAnalyzer
-            
-            news_analyzer = NewsSentimentAnalyzer(cfg.event_db_path)
-            sentiment_score, headlines = news_analyzer.get_sentiment()
-            
-            if sentiment_score > 0.15:
-                sent_emoji = "Alcista"
-            elif sentiment_score < -0.15:
-                sent_emoji = "Bajista"
-            else:
-                sent_emoji = "Neutral"
-                
-            headline_str = ""
-            if headlines:
-                headline_str = "\nTitulares destacados que estoy vigilando:\n" + "\n".join([f"• {h['title']}" for h in headlines[:2]])
 
-            msg = (
-                f"Actualización de estrategia y cobertura técnica para la sesión de hoy.\n\n"
-                f"Tras revisar el mapa de liquidez global y el comportamiento de la volatilidad en los principales pares, ajustamos los parámetros de entrada en la cartera para mantener la mejor relación riesgo/beneficio en cada activo:\n\n"
-                + "\n".join(tuned_summary) + f"\n\n"
-                f"En el plano macroeconómico, la lectura de sentimiento en los titulares se mantiene en tono {sent_emoji} (sesgo {sentiment_score:+.2f})."
-                + headline_str + "\n\n"
-                f"Seguimos priorizando la paciencia y una ejecución disciplinada en cada zona clave."
+            news_analyzer = NewsSentimentAnalyzer(cfg.event_db_path)
+            try:
+                sentiment_score, _headlines = news_analyzer.get_sentiment(allow_network=False)
+            except TypeError:
+                sentiment_score, _headlines = news_analyzer.get_sentiment()
+
+            if sentiment_score > 0.15:
+                sent_label = "Alcista"
+            elif sentiment_score < -0.15:
+                sent_label = "Bajista"
+            else:
+                sent_label = "Neutral"
+
+            msg = BinanceSquareContentGenerator.generate_recalibration_note(
+                tuned_summary=tuned_summary,
+                sentiment_label=sent_label,
+                sentiment_score=float(sentiment_score),
+                symbols=list(cfg.symbols_to_trade),
             )
             enqueue_square_post(
                 msg,
                 is_priority=False,
-                metadata={"archetype": "recalibration_summary", "source": "auto_tune_cycle"},
+                metadata={"archetype": "recalibration_note", "source": "auto_tune_cycle"},
                 cfg=cfg,
             )
         except Exception as e:
@@ -1796,56 +1802,76 @@ def _publish_live_event_to_square(cfg: BotConfig, symbol: str, event: dict[str, 
     if not cfg.binance_square_enabled:
         return
     try:
-        from bot.binance_square import BinanceSquareContentGenerator, sanitize_for_square
+        from bot.binance_square import BinanceSquareContentGenerator
         from bot.growth_traffic_engine import enqueue_square_post
         from bot.news_sentiment import NewsSentimentAnalyzer
-        
+
         event_name = event.get("event")
         price = float(event.get("price", 0.0))
-        qty = float(event.get("qty", 0.0))
         stop = float(event.get("stop", 0.0))
         take = float(event.get("take", 0.0))
         reason = str(event.get("reason", "unknown"))
         strategy_mode = str(event.get("strategy_mode", cfg.strategy_mode))
-        composite_score = float(event.get("composite_score", event.get("quality", 0.75)))
-        
-        # Mapeo de descripción humana y profesional de la estrategia
+        min_score = float(getattr(cfg, "binance_square_min_score", 0.72))
+
+        raw_score = event.get("composite_score")
+        if raw_score is None:
+            raw_score = event.get("quality")
+        if raw_score is None:
+            raw_score = event.get("signal_confidence")
+
+        if raw_score is not None:
+            composite_score = float(raw_score)
+            if event_name == "live_buy" and composite_score < min_score:
+                logging.info(
+                    "[%s] Señal live_buy omitida en Binance Square: score %.3f < mínimo %.3f.",
+                    symbol,
+                    composite_score,
+                    min_score,
+                )
+                return
+        else:
+            composite_score = 0.75
+
+        # Mapeo de descripción sobria de la estrategia (sin lenguaje promocional)
         REASON_DESCS = {
-            "turtle_breakout": "Confirmación de ruptura de resistencia local por encima del Canal Donchian de corto plazo, apoyada por una aceleración del volumen y un ADX en zona de expansión de tendencia.",
-            "connors_rsi": "Retroceso técnico controlado dentro de una estructura alcista de largo plazo. El RSI de periodo ultra corto muestra condiciones extremas de sobreventa temporal, ofreciendo un punto de entrada de alta probabilidad (comprando en zona de soporte local).",
-            "elder_triple": "Setup tendencial de Triple Pantalla. La tendencia estructural macro (EMA 200) es alcista, se completó una corrección menor a nivel intermedio, y el gatillo en 15m confirma el reinicio del flujo de compra con MACD e histograma ascendentes.",
-            "williams_alligator": "Fase inicial de expansión de medias móviles rápidas (Alligator en vigilia). Tras un periodo de compresión de rango, el precio rompe al alza confirmando un desequilibrio entre oferta y demanda con volumen creciente.",
-            "mean_reversion": "Rebotando desde niveles extremos de desviación en la banda inferior de Bollinger. El precio muestra absorción de ventas cerca de zonas de liquidez clave en el soporte del rango lateral."
+            "active_momentum": "Aceleración de momentum direccional con expansión relativa de volumen sobre rango intradía.",
+            "turtle_breakout": "Ruptura sobre el Canal Donchian de corto plazo acompañada de expansión de volumen y pendiente tendencial positiva.",
+            "connors_rsi": "Retroceso controlado dentro de estructura alcista mayor con sobreventa de corto plazo en zona de soporte.",
+            "elder_triple": "Alineación tendencial de Triple Pantalla sobre media estructural (EMA 200) con confirmación de flujo en 15m.",
+            "williams_alligator": "Expansión inicial de medias móviles tras compresión de rango con incremento de volumen en libro.",
+            "mean_reversion": "Absorción de oferta en desviación inferior de Bollinger sobre zona de liquidez previa.",
+            "trend": "Alineación tendencial sobre media estructural con confirmación de flujo.",
+            "breakout": "Ruptura direccional sobre nivel de rango con respaldo de volumen.",
+            "pullback_trend": "Retroceso controlado dentro de tendencia principal en zona de soporte técnico.",
+            "trend_following": "Continuidad sobre estructura tendencial principal con volatilidad acotada.",
+            "pullback": "Retroceso táctico hacia zona de demanda dentro de la estructura vigente.",
+            "auto": "Confluencia cuantitativa validada en estructura y control de volatilidad.",
         }
-        reason_desc = REASON_DESCS.get(strategy_mode, f"Setup técnico de confirmación en base a {reason}.")
-        
-        # Consultar sentimiento de noticias para acompañar la señal (solo caché local / no bloqueante)
-        sent_desc = "neutral, lo que favorece setups técnicos limpios"
-        sent_emoji = "Neutral (0.00)"
-        headline_bullet = ""
+        reason_desc = REASON_DESCS.get(
+            strategy_mode.strip().lower(),
+            "Confluencia cuantitativa validada en estructura y control de volatilidad.",
+        )
+
+        # Consultar sentimiento de noticias (solo caché local / no bloqueante)
+        sent_label = "Neutral"
+        sentiment_score = 0.0
         try:
             news_analyzer = NewsSentimentAnalyzer(cfg.event_db_path)
-            # Evitar fetch de red síncrono de 15 segundos en el hilo en vivo; solo consultar datos en caché
             try:
-                sentiment_score, headlines = news_analyzer.get_sentiment(allow_network=False)
+                sentiment_score, _headlines = news_analyzer.get_sentiment(allow_network=False)
             except TypeError:
-                sentiment_score, headlines = 0.0, []
-                
+                sentiment_score, _headlines = 0.0, []
+
             if sentiment_score > 0.15:
-                sent_desc = "bastante alcista, con noticias muy positivas impulsando al sector"
-                sent_emoji = "Alcista (+{:.2f})".format(sentiment_score)
+                sent_label = "Alcista"
             elif sentiment_score < -0.15:
-                sent_desc = "algo bajista por titulares negativos, pero vemos absorción de compra"
-                sent_emoji = "Bajista ({:.2f})".format(sentiment_score)
+                sent_label = "Bajista"
             else:
-                sent_desc = "neutral, lo que favorece setups técnicos limpios"
-                sent_emoji = "Neutral ({:.2f})".format(sentiment_score)
-                
-            if headlines:
-                headline_bullet = f"\nTitular clave del momento: \"{headlines[0]['title']}\""
+                sent_label = "Neutral"
         except Exception as sent_exc:
             logging.debug("Error leyendo sentimiento para Binance Square: %s", sent_exc)
-            
+
         msg = ""
         is_priority = False
         archetype = "live_event"
@@ -1857,8 +1883,7 @@ def _publish_live_event_to_square(cfg: BotConfig, symbol: str, event: dict[str, 
             tp1 = take if take > price else (price + diff * 0.75)
             tp2 = price + (diff * 1.50)
             tp3 = price + (diff * 2.50)
-            
-            full_thesis = f"{reason_desc} Con respecto al flujo de noticias del sector, detectamos un entorno {sent_desc}.{headline_bullet}"
+
             msg = BinanceSquareContentGenerator.generate_quant_setup_post(
                 symbol=symbol,
                 action="BUY",
@@ -1867,38 +1892,30 @@ def _publish_live_event_to_square(cfg: BotConfig, symbol: str, event: dict[str, 
                 tp1=tp1,
                 tp2=tp2,
                 tp3=tp3,
-                composite_score=max(composite_score, getattr(cfg, "binance_square_min_score", 0.72)),
+                composite_score=composite_score,
                 timeframe=getattr(cfg, "interval", "15m"),
-                thesis=full_thesis,
+                thesis=reason_desc,
+                strategy_mode=strategy_mode,
+                sentiment_label=sent_label,
+                sentiment_score=float(sentiment_score),
             )
         elif event_name == "live_sell":
             archetype = "trade_close"
             pnl = float(event.get("pnl", 0.0))
             pnl_pct = float(event.get("pnl_pct", 0.0))
-            
-            pnl_title = "Objetivo de ganancias alcanzado (Take Profit)" if pnl >= 0 else "Activación de límite de protección (Stop Loss)"
-            pnl_desc = "Acabamos de cerrar la posición asegurando beneficios en nuestra zona objetivo de liquidez." if pnl >= 0 else "La posición se cerró automáticamente en el nivel de invalidación para proteger el capital de la cartera."
-            
-            if "exit" in reason.lower() or "prematura" in reason.lower() or "trend_or_momentum" in reason.lower() or "target_exit" in reason.lower():
-                pnl_title = "Salida táctica por rotación de flujo"
-                pnl_desc = "Decidimos cerrar la operación de forma anticipada tras detectar pérdida de impulso comprador en las temporalidades menores."
-            
-            raw_msg = (
-                f"Cierre de operación en #{symbol}: {pnl_title}.\n\n"
-                f"{pnl_desc}\n\n"
-                f"Resumen de la ejecución:\n"
-                f"• Precio de salida: {price:.4f} USDT\n"
-                f"• Resultado neto: {pnl_pct:+.2f}% ({pnl:+.4f} USDT)\n"
-                f"• Motivo técnico: {reason}\n"
-                f"• Entorno de sentimiento: {sent_emoji}"
-                f"{headline_bullet}\n\n"
-                f"Mantenemos la liquidez lista para el próximo setup de alta probabilidad.\n\n"
-                f"{BinanceSquareContentGenerator.CTA_TELEGRAM}\n"
-                f"{BinanceSquareContentGenerator.CTA_PORTAL}\n\n"
-                f"{BinanceSquareContentGenerator.HASHTAGS}"
+            entry_ref = event.get("entry_price")
+            msg = BinanceSquareContentGenerator.generate_trade_close_post(
+                symbol=symbol,
+                exit_price=price,
+                pnl_pct=pnl_pct,
+                pnl_usdt=pnl,
+                reason=reason,
+                sentiment_label=sent_label,
+                sentiment_score=float(sentiment_score),
+                entry_price=float(entry_ref) if entry_ref is not None else None,
+                strategy_mode=strategy_mode,
             )
-            msg = sanitize_for_square(raw_msg)
-            
+
         if msg:
             enqueue_square_post(
                 msg,

@@ -94,12 +94,29 @@ class TestAdversarialColdStartAndEquity(unittest.TestCase):
     """Stress tests on cold start, negative/NaN balances, and equity auto-initialization."""
 
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.cfg = BotConfig(
             symbol="BTCUSDT",
             initial_balance=10000.0,
             max_daily_drawdown=0.05,
+            event_db_path=os.path.join(self.temp_dir.name, "adv_cold.sqlite3"),
+            binance_square_enabled=False,
+            binance_square_dry_run=True,
         )
         self.risk = RiskManager(self.cfg)
+
+    def tearDown(self):
+        import gc
+        for attr in ("store",):
+            st = getattr(self.risk, attr, None)
+            if st is not None and hasattr(st, "engine"):
+                try:
+                    st.engine.dispose()
+                except Exception:
+                    pass
+        self.risk = None
+        gc.collect()
+        self.temp_dir.cleanup()
 
     def test_adversarial_equity_inputs_never_return_invalid_day_start_equity(self):
         """Stress can_trade with edge-case and pathological equity values."""
@@ -116,10 +133,18 @@ class TestAdversarialColdStartAndEquity(unittest.TestCase):
         ]
         for eq_input in test_inputs:
             risk = RiskManager(self.cfg)
-            allowed, reason = risk.can_trade(now, eq_input)
-            self.assertTrue(allowed, f"Failed for input {eq_input}: allowed={allowed}, reason={reason}")
-            self.assertNotEqual(reason, "invalid_day_start_equity", f"Produced invalid_day_start_equity on {eq_input}")
-            self.assertGreaterEqual(risk.state.day_start_equity, 10000.0)
+            try:
+                allowed, reason = risk.can_trade(now, eq_input)
+                self.assertTrue(allowed, f"Failed for input {eq_input}: allowed={allowed}, reason={reason}")
+                self.assertNotEqual(reason, "invalid_day_start_equity", f"Produced invalid_day_start_equity on {eq_input}")
+                self.assertGreaterEqual(risk.state.day_start_equity, 10000.0)
+            finally:
+                st = getattr(risk, "store", None)
+                if st is not None and hasattr(st, "engine"):
+                    try:
+                        st.engine.dispose()
+                    except Exception:
+                        pass
 
     def test_day_start_equity_preservation_across_adversarial_roll(self):
         """sync_day preserves existing positive equity and rejects zero/negative overwrites."""
@@ -438,40 +463,54 @@ class TestAdversarialTelegramCadenceAndAlertSuppression(unittest.TestCase):
     def test_run_live_alert_suppression(self):
         """run_live only sends Telegram alerts on live_buy / live_sell, suppressing risk_pause and live_guard."""
         from dataclasses import replace
-        cfg = replace(BotConfig.from_env(), active_symbols="BTCUSDT")
+        from bot.growth_traffic_engine import reset_square_worker
 
-        with patch("bot.main._assert_live_ready"), \
-             patch("bot.main.perform_auto_tuning"), \
-             patch("bot.main.LiveTrader") as mock_trader_cls, \
-             patch("bot.telemetry.Telemetry.alert") as mock_alert, \
-             patch("bot.telemetry.Telemetry.record") as mock_record:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "run_live_test.sqlite3")
+            cfg = replace(
+                BotConfig.from_env(),
+                active_symbols="BTCUSDT",
+                event_db_path=db_path,
+                binance_square_enabled=False,
+                binance_square_dry_run=True,
+                telegram_enabled=False,
+            )
 
-            mock_trader = MagicMock()
-            mock_trader_cls.return_value = mock_trader
+            try:
+                with patch("bot.main._assert_live_ready"), \
+                     patch("bot.main.perform_auto_tuning"), \
+                     patch("bot.main.LiveTrader") as mock_trader_cls, \
+                     patch("bot.telemetry.Telemetry.alert") as mock_alert, \
+                     patch("bot.telemetry.Telemetry.record") as mock_record:
 
-            # 1. Simulate step returning risk_pause
-            mock_trader.step.return_value = {"event": "risk_pause", "reason": "trend_no_edge"}
-            run_live(cfg, confirm_live="I_UNDERSTAND_LIVE_RISK")
-            self.assertEqual(mock_alert.call_count, 0, "telemetry.alert no debe llamarse para risk_pause")
-            self.assertTrue(mock_record.called, "telemetry.record debe registrarse para auditoría")
+                    mock_trader = MagicMock()
+                    mock_trader_cls.return_value = mock_trader
 
-            mock_alert.reset_mock()
-            mock_record.reset_mock()
+                    # 1. Simulate step returning risk_pause
+                    mock_trader.step.return_value = {"event": "risk_pause", "reason": "trend_no_edge"}
+                    run_live(cfg, confirm_live="I_UNDERSTAND_LIVE_RISK")
+                    self.assertEqual(mock_alert.call_count, 0, "telemetry.alert no debe llamarse para risk_pause")
+                    self.assertTrue(mock_record.called, "telemetry.record debe registrarse para auditoría")
 
-            # 2. Simulate step returning live_guard
-            mock_trader.step.return_value = {"event": "live_guard", "reason": "regime_unknown"}
-            run_live(cfg, confirm_live="I_UNDERSTAND_LIVE_RISK")
-            self.assertEqual(mock_alert.call_count, 0, "telemetry.alert no debe llamarse para live_guard")
-            self.assertTrue(mock_record.called)
+                    mock_alert.reset_mock()
+                    mock_record.reset_mock()
 
-            mock_alert.reset_mock()
-            mock_record.reset_mock()
+                    # 2. Simulate step returning live_guard
+                    mock_trader.step.return_value = {"event": "live_guard", "reason": "regime_unknown"}
+                    run_live(cfg, confirm_live="I_UNDERSTAND_LIVE_RISK")
+                    self.assertEqual(mock_alert.call_count, 0, "telemetry.alert no debe llamarse para live_guard")
+                    self.assertTrue(mock_record.called)
 
-            # 3. Simulate step returning live_buy -> MUST alert
-            mock_trader.step.return_value = {"event": "live_buy", "price": 60000.0, "qty": 0.1, "reason": "trend"}
-            run_live(cfg, confirm_live="I_UNDERSTAND_LIVE_RISK")
-            self.assertEqual(mock_alert.call_count, 1, "telemetry.alert DEBE llamarse para live_buy")
-            self.assertTrue(mock_record.called)
+                    mock_alert.reset_mock()
+                    mock_record.reset_mock()
+
+                    # 3. Simulate step returning live_buy -> MUST alert
+                    mock_trader.step.return_value = {"event": "live_buy", "price": 60000.0, "qty": 0.1, "reason": "trend"}
+                    run_live(cfg, confirm_live="I_UNDERSTAND_LIVE_RISK")
+                    self.assertEqual(mock_alert.call_count, 1, "telemetry.alert DEBE llamarse para live_buy")
+                    self.assertTrue(mock_record.called)
+            finally:
+                reset_square_worker()
 
 
 class TestAdversarialForensicAudit(unittest.TestCase):
@@ -503,7 +542,7 @@ class TestAdversarialForensicAudit(unittest.TestCase):
         db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "bot_events.sqlite3"))
         if not os.path.exists(db_path):
             return
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
             cur = conn.cursor()
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='events'")
             if cur.fetchone():

@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from http.client import HTTPConnection
 from unittest.mock import MagicMock, patch
 
@@ -19,7 +21,14 @@ from bot.vip_signal_bot import VIPSignalTracker
 class TestAppDashboard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.cfg = BotConfig.from_env()
+        cls._tmpdir = tempfile.TemporaryDirectory()
+        cls.cfg = replace(
+            BotConfig.from_env(),
+            event_db_path=os.path.join(cls._tmpdir.name, "dashboard_test.sqlite3"),
+            binance_square_enabled=False,
+            binance_square_dry_run=True,
+            telegram_enabled=False,
+        )
         cls.port = 8799
         cls.server = ThreadingHTTPServer(("127.0.0.1", cls.port), AppDashboardHandler)
         cls.server.cfg = cls.cfg  # type: ignore
@@ -31,6 +40,7 @@ class TestAppDashboard(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
+        cls._tmpdir.cleanup()
 
     def test_get_html_index(self):
         conn = HTTPConnection("127.0.0.1", self.port)

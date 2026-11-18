@@ -37,6 +37,7 @@ from bot.binance_square import (
 from bot.growth_traffic_engine import (
     BinanceSquareWorker,
     get_square_worker,
+    reset_square_worker,
     enqueue_square_post,
 )
 
@@ -153,9 +154,9 @@ class TestOpenAPIFaultInjection(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 2)
         mock_sleep.assert_called_once()
         slept = mock_sleep.call_args[0][0]
-        # Attempt 1: 0.2 * 2^0 + jitter (0.01 to 0.05) -> 0.21 to 0.25
-        self.assertGreaterEqual(slept, 0.20)
-        self.assertLessEqual(slept, 0.30)
+        # Attempt 1: 2.0 * 2^0 + jitter (0.05 to 0.25) -> 2.05 to 2.25
+        self.assertGreaterEqual(slept, 2.00)
+        self.assertLessEqual(slept, 2.30)
 
     @patch("time.sleep")
     @patch("requests.post")
@@ -176,15 +177,16 @@ class TestOpenAPIFaultInjection(unittest.TestCase):
         self.assertEqual(mock_sleep.call_count, 3)
 
         sleep_times = [call[0][0] for call in mock_sleep.call_args_list]
-        # Attempt 1: ~0.20 - 0.25s
-        self.assertGreaterEqual(sleep_times[0], 0.20)
-        self.assertLessEqual(sleep_times[0], 0.30)
-        # Attempt 2: ~0.40 - 0.45s
-        self.assertGreaterEqual(sleep_times[1], 0.40)
-        self.assertLessEqual(sleep_times[1], 0.50)
-        # Attempt 3: ~0.80 - 0.85s
-        self.assertGreaterEqual(sleep_times[2], 0.80)
-        self.assertLessEqual(sleep_times[2], 0.95)
+        # Attempt 1: ~2.05 - 2.25s
+        self.assertGreaterEqual(sleep_times[0], 2.00)
+        self.assertLessEqual(sleep_times[0], 2.30)
+        # Attempt 2: ~4.05 - 4.25s
+        self.assertGreaterEqual(sleep_times[1], 4.00)
+        self.assertLessEqual(sleep_times[1], 4.30)
+        # Attempt 3: ~8.05 - 8.25s
+        self.assertGreaterEqual(sleep_times[2], 8.00)
+        self.assertLessEqual(sleep_times[2], 8.30)
+        self.assertTrue(sleep_times[0] < sleep_times[1] < sleep_times[2])
 
     @patch("time.sleep")
     @patch("requests.post")
@@ -233,6 +235,118 @@ class TestOpenAPIFaultInjection(unittest.TestCase):
             self.assertFalse(result)
         except Exception as exc:
             self.fail(f"Corrupt JSON response raised unhandled exception: {exc}")
+
+    @patch("time.sleep")
+    @patch("requests.post")
+    def test_business_error_circuit_breakers_all_codes(
+        self, mock_post: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Verifies quarantine & retry policy for 30023, 220094, 220095, 220009, 220003/4, 10005, 20002/20022, 10004, HTTP 504."""
+        quarantine_codes = ["30023", "220094", "220095", "220009", "220003", "220004", "10005"]
+        for code in quarantine_codes:
+            with tempfile.TemporaryDirectory() as td:
+                dbp = os.path.join(td, f"cb_{code}.sqlite3")
+                pub = BinanceSquarePublisher(
+                    BotConfig(binance_square_enabled=True, binance_square_api_key="k", event_db_path=dbp)
+                )
+                mock_post.reset_mock()
+                resp = MagicMock()
+                resp.status_code = 200
+                resp.json.return_value = {"code": code, "success": False, "message": f"Err {code}"}
+                mock_post.return_value = resp
+
+                self.assertFalse(pub.publish_post(f"Post {code}"))
+                self.assertEqual(mock_post.call_count, 1, f"Code {code} should not blindly retry")
+                restricted, _ = pub.rate_limiter.is_restricted()
+                self.assertTrue(restricted, f"Code {code} should activate restriction")
+                self.assertFalse(pub.publish_post(f"Followup {code}"))
+                self.assertEqual(mock_post.call_count, 1, f"Restricted code {code} should block 2nd call locally")
+
+        # 20002 / 20022 sensitive words: no retry, logs messageDetail
+        for sw_code in ("20002", "20022"):
+            with tempfile.TemporaryDirectory() as td:
+                dbp = os.path.join(td, f"sw_{sw_code}.sqlite3")
+                pub = BinanceSquarePublisher(
+                    BotConfig(binance_square_enabled=True, binance_square_api_key="k", event_db_path=dbp)
+                )
+                mock_post.reset_mock()
+                resp = MagicMock()
+                resp.status_code = 200
+                resp.json.return_value = {"code": sw_code, "success": False, "messageDetail": "Prohibited term"}
+                mock_post.return_value = resp
+                self.assertFalse(pub.publish_post("Sensitive post"))
+                self.assertEqual(mock_post.call_count, 1)
+                con = sqlite3.connect(dbp)
+                try:
+                    payload = json.loads(con.execute("SELECT payload_json FROM events").fetchone()[0])
+                    self.assertEqual(payload.get("message_detail"), "Prohibited term")
+                finally:
+                    con.close()
+
+        # 10004 transient JSON error -> retried and succeeds
+        with tempfile.TemporaryDirectory() as td:
+            dbp = os.path.join(td, "c10004.sqlite3")
+            pub = BinanceSquarePublisher(
+                BotConfig(binance_square_enabled=True, binance_square_api_key="k", event_db_path=dbp)
+            )
+            mock_post.reset_mock()
+            mock_sleep.reset_mock()
+            r1 = MagicMock(status_code=200)
+            r1.json.return_value = {"code": "10004", "success": False, "message": "Network error"}
+            r2 = MagicMock(status_code=200)
+            r2.json.return_value = {"code": "000000", "success": True, "data": {"id": "ok_10004"}}
+            mock_post.side_effect = [r1, r2]
+            self.assertTrue(pub.publish_post("Transient 10004 test"))
+            self.assertEqual(mock_post.call_count, 2)
+            self.assertEqual(mock_sleep.call_count, 1)
+
+        # HTTP 504 -> zero blind retries to prevent duplicate posts
+        with tempfile.TemporaryDirectory() as td:
+            dbp = os.path.join(td, "http504.sqlite3")
+            pub = BinanceSquarePublisher(
+                BotConfig(binance_square_enabled=True, binance_square_api_key="k", event_db_path=dbp)
+            )
+            mock_post.reset_mock()
+            mock_post.side_effect = None
+            r504 = MagicMock(status_code=504)
+            mock_post.return_value = r504
+            self.assertFalse(pub.publish_post("Gateway 504 test"))
+            self.assertEqual(mock_post.call_count, 1)
+
+    @patch("requests.post")
+    def test_rate_limiter_dedup_hash_matches_square_clean_text(self, mock_post: MagicMock) -> None:
+        """Two inputs yielding identical square_clean_text must deduplicate after compliance stripping."""
+        mock_post.return_value = MagicMock(
+            status_code=200, json=lambda: {"code": "000000", "success": True, "data": {"id": "p1"}}
+        )
+        base_t = 100000.0
+        with patch("time.time", return_value=base_t):
+            ok1 = self.publisher.publish_post(
+                "<b>Alerta</b>\n\nAnálisis $BTC estable\n\nhttps://evil.example",
+                check_rate_limit=True,
+            )
+        self.assertTrue(ok1)
+        with patch("time.time", return_value=base_t + 3700.0):
+            ok2 = self.publisher.publish_post(
+                "Alerta\n\nAnálisis $BTC estable",
+                check_rate_limit=True,
+            )
+        self.assertFalse(ok2)
+        self.assertEqual(mock_post.call_count, 1)
+
+    @patch("requests.post")
+    def test_empty_body_after_compliance_aborts_before_http_220011(self, mock_post: MagicMock) -> None:
+        """Pure-CTA input leaving empty body after compliance aborts before HTTP (220011 prevention)."""
+        ok = self.publisher.publish_post("📲 Canal VIP @AdminVIPSignals https://nexodipa.github.io/bot-de-trading/")
+        self.assertFalse(ok)
+        mock_post.assert_not_called()
+        con = sqlite3.connect(self.temp_db.name)
+        try:
+            row = con.execute("SELECT event, payload_json FROM events WHERE mode='binance_square'").fetchone()
+            self.assertEqual(row[0], "binance_square_failed")
+            self.assertEqual(json.loads(row[1]).get("code"), "220011")
+        finally:
+            con.close()
 
 
 class TestStandbyAndDegradation(unittest.TestCase):
@@ -330,6 +444,32 @@ class TestStandbyAndDegradation(unittest.TestCase):
             self.assertEqual(rows[0][0], "binance_square_simulation")
             payload = json.loads(rows[0][1])
             self.assertEqual(payload.get("status"), "dry_run")
+        finally:
+            conn.close()
+
+    @patch("requests.post")
+    def test_dry_run_logs_square_clean_text_not_raw(self, mock_post: MagicMock) -> None:
+        """dry_run must log sanitized/compliant square_clean_text rather than raw HTML/URLs."""
+        cfg = BotConfig(
+            binance_square_enabled=True,
+            binance_square_api_key="valid_key",
+            binance_square_dry_run=True,
+            event_db_path=self.temp_db.name,
+        )
+        pub = BinanceSquarePublisher(cfg)
+        res = pub.publish_post("<b>Titulo</b>\n\nContenido $BTC\nhttps://example.com")
+        self.assertTrue(res)
+        mock_post.assert_not_called()
+
+        conn = sqlite3.connect(self.temp_db.name)
+        try:
+            payload = json.loads(
+                conn.execute("SELECT payload_json FROM events WHERE mode='binance_square'").fetchone()[0]
+            )
+            logged_text = payload.get("text", "")
+            self.assertNotIn("<b>", logged_text)
+            self.assertNotIn("https://example.com", logged_text)
+            self.assertIn("Titulo", logged_text)
         finally:
             conn.close()
 
@@ -449,6 +589,7 @@ class TestLiveLoopHookAndTickLatency(unittest.TestCase):
     """Area 4: Measure tick latency of enqueue_square_post and investigate blocking paths."""
 
     def setUp(self) -> None:
+        reset_square_worker()
         self.temp_db = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
         self.temp_db.close()
         self.cfg = BotConfig(
@@ -459,6 +600,7 @@ class TestLiveLoopHookAndTickLatency(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        reset_square_worker()
         if os.path.exists(self.temp_db.name):
             try:
                 os.remove(self.temp_db.name)
@@ -494,47 +636,48 @@ class TestLiveLoopHookAndTickLatency(unittest.TestCase):
         finally:
             worker.stop()
 
-    def test_live_hook_synchronous_blocking_vulnerability_discovery(self) -> None:
+    @patch("requests.post")
+    def test_live_hook_synchronous_blocking_vulnerability_discovery(self, mock_post: MagicMock) -> None:
         """CRITICAL ADVERSARIAL STRESS TEST:
-        
+
         Investigate whether _publish_live_event_to_square in bot/main.py performs
         synchronous news sentiment network fetching or DB querying on the live trading thread.
         """
         from bot.main import _publish_live_event_to_square
 
-        # Scenario 1: binance_square_enabled is False
-        disabled_cfg = BotConfig(binance_square_enabled=False)
-        t0 = time.perf_counter()
-        _publish_live_event_to_square(disabled_cfg, "SOLUSDT", {"event": "live_buy", "price": 145.0})
-        t_disabled = (time.perf_counter() - t0) * 1000.0
-        self.assertLess(t_disabled, 0.05, f"Disabled hook latency took {t_disabled:.4f} ms")
-
-        # Scenario 2: binance_square_enabled is True, but worker is active
-        worker = get_square_worker(self.cfg)
-
-        # Mock NewsSentimentAnalyzer network fetch to avoid external network delay during test
-        with patch("bot.news_sentiment.fetch_latest_news") as mock_news_fetch:
-            mock_news_fetch.return_value = [{"title": "Crypto Surge", "description": "Bullish", "pub_date": ""}]
-            
+        try:
+            # Scenario 1: binance_square_enabled is False
+            disabled_cfg = BotConfig(binance_square_enabled=False, event_db_path=self.temp_db.name)
             t0 = time.perf_counter()
-            _publish_live_event_to_square(
-                self.cfg,
-                "SOLUSDT",
-                {
-                    "event": "live_buy",
-                    "price": 145.0,
-                    "stop": 140.0,
-                    "take": 155.0,
-                    "strategy_mode": "turtle_breakout",
-                    "composite_score": 0.82,
-                },
-            )
-            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            _publish_live_event_to_square(disabled_cfg, "SOLUSDT", {"event": "live_buy", "price": 145.0})
+            t_disabled = (time.perf_counter() - t0) * 1000.0
+            self.assertLess(t_disabled, 0.2, f"Disabled hook latency took {t_disabled:.4f} ms")
 
-            # Notice: _publish_live_event_to_square instantiates NewsSentimentAnalyzer,
-            # reads DB, parses sentiment, formats post, and then enqueues.
-            # Record the actual elapsed time.
-            print(f"\n[LATENCY BENCHMARK] _publish_live_event_to_square elapsed: {elapsed_ms:.4f} ms")
+            # Scenario 2: binance_square_enabled is True, worker active with dry_run=True
+            get_square_worker(self.cfg)
+
+            with patch("bot.news_sentiment.fetch_latest_news") as mock_news_fetch:
+                mock_news_fetch.return_value = [{"title": "Crypto Surge", "description": "Bullish", "pub_date": ""}]
+
+                t0 = time.perf_counter()
+                _publish_live_event_to_square(
+                    self.cfg,
+                    "SOLUSDT",
+                    {
+                        "event": "live_buy",
+                        "price": 145.0,
+                        "stop": 140.0,
+                        "take": 155.0,
+                        "strategy_mode": "turtle_breakout",
+                        "composite_score": 0.82,
+                    },
+                )
+                elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                mock_news_fetch.assert_not_called()
+                mock_post.assert_not_called()
+                print(f"\n[LATENCY BENCHMARK] _publish_live_event_to_square elapsed: {elapsed_ms:.4f} ms")
+        finally:
+            reset_square_worker()
 
 
 if __name__ == "__main__":
