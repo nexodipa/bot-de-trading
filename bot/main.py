@@ -777,6 +777,29 @@ class LiveTrader:
             return 0.0, "min_notional_rejected"
         return qty, "ok"
 
+    def _maybe_sweep_profit(self, pnl: float) -> float:
+        """Aparta automáticamente un porcentaje de la ganancia realizada hacia Simple Earn Flexible."""
+        sweep_pct = float(getattr(self.cfg, "profit_sweep_pct", 0.0) or 0.0)
+        if pnl <= 0 or sweep_pct <= 0 or self.earn is None:
+            return 0.0
+        amount = round(pnl * min(max(sweep_pct, 0.0), 0.90), 4)
+        min_sub = float(getattr(self.cfg, "earn_min_subscribe", 0.1) or 0.1)
+        if amount < min_sub:
+            return 0.0
+        try:
+            self.earn.subscribe_flexible(self.quote_asset, amount)
+            logging.info(
+                "[%s] Profit Sweep: %.4f %s (%.0f%% de ganancia) suscritos a Simple Earn Flexible.",
+                self.cfg.symbol,
+                amount,
+                self.quote_asset,
+                sweep_pct * 100.0,
+            )
+            return amount
+        except Exception as exc:
+            logging.debug("[%s] Profit Sweep omitido: %s", self.cfg.symbol, exc)
+            return 0.0
+
     def step(self, order_book: dict[str, Any] | None = None) -> dict[str, Any]:
         # Sincronizar reloj en cada paso para evitar desvíos temporales (APIError -1021)
         try:
@@ -921,6 +944,7 @@ class LiveTrader:
                     self.last_processed_close_time = now
                     pnl = (exit_price - db_pos.entry_price) * db_pos.quantity
                     pnl_pct = (pnl / (db_pos.entry_price * db_pos.quantity)) * 100 if db_pos.entry_price > 0 else 0.0
+                    swept_profit = self._maybe_sweep_profit(pnl)
                     return {
                         "time": now.isoformat(),
                         "event": "live_sell",
@@ -928,14 +952,24 @@ class LiveTrader:
                         "qty": db_pos.quantity,
                         "pnl": pnl,
                         "pnl_pct": pnl_pct,
+                        "profit_swept_earn": swept_profit,
                         "reason": close_reason,
                         "strategy_mode": self.cfg.strategy_mode,
                     }
 
-                # Trailing stop dinámico
-                new_stop = close - (atr_value * self.cfg.trailing_atr_mult)
-                if new_stop > self.position.stop_price:
-                    logging.info(f"Actualizando Trailing Stop de {self.position.stop_price} a {new_stop}...")
+                # Break-Even automático al alcanzar +1.0R y Trailing Stop por ATR (umbral >= 0.25%)
+                initial_risk = max(
+                    db_pos.entry_price - (db_pos.stop_price or self.position.stop_price),
+                    db_pos.entry_price * 0.005,
+                )
+                break_even_stop = db_pos.entry_price * (1.0 + self.cfg.fee_rate * 2.2)
+                atr_trail_stop = close - (atr_value * self.cfg.trailing_atr_mult)
+                candidate_stop = atr_trail_stop
+                if close >= db_pos.entry_price + initial_risk:
+                    candidate_stop = max(candidate_stop, break_even_stop)
+                if candidate_stop >= self.position.stop_price * 1.0025:
+                    new_stop = candidate_stop
+                    logging.info(f"Actualizando Break-Even/Trailing Stop de {self.position.stop_price} a {new_stop}...")
                     if db_pos.stop_loss_order_id:
                         try:
                             self.exec.cancel_order(self.cfg.symbol, db_pos.stop_loss_order_id)
@@ -1005,6 +1039,7 @@ class LiveTrader:
                     self.last_processed_close_time = now
                     pnl = (exit_price - db_pos.entry_price) * executed_qty
                     pnl_pct = (pnl / (db_pos.entry_price * executed_qty)) * 100 if db_pos.entry_price > 0 else 0.0
+                    swept_profit = self._maybe_sweep_profit(pnl)
                     return {
                         "time": now.isoformat(),
                         "event": "live_sell",
@@ -1012,6 +1047,7 @@ class LiveTrader:
                         "qty": executed_qty,
                         "pnl": pnl,
                         "pnl_pct": pnl_pct,
+                        "profit_swept_earn": swept_profit,
                         "reason": signal.reason,
                         "strategy_mode": self.cfg.strategy_mode,
                     }
@@ -2221,6 +2257,35 @@ def run_live_loop(
 
             if loop_earn is not None:
                 _run_earn_sweep(cfg, telemetry, earn=loop_earn)
+
+            if getattr(cfg, "dca_enabled", False) and traders:
+                try:
+                    from bot.dca_accumulator import QuantitativeDCAAccumulator
+                    dca = QuantitativeDCAAccumulator(
+                        rsi_threshold=getattr(cfg, "dca_rsi_threshold", 28.0),
+                        cooldown_hours=getattr(cfg, "dca_cooldown_hours", 72),
+                        quote_usdt=getattr(cfg, "dca_quote_usdt", 6.0),
+                    )
+                    first_trader = next(iter(traders.values()))
+                    for dca_sym in [s.strip().upper() for s in getattr(cfg, "dca_assets", "BTCUSDT,ETHUSDT,BNBUSDT").split(",") if s.strip()]:
+                        dca_res = dca.execute_if_eligible(
+                            symbol=dca_sym,
+                            data_client=first_trader.data,
+                            exec_client=first_trader.exec,
+                            state_store=telemetry.store,
+                            earn_manager=loop_earn,
+                            dry_run=cfg.use_testnet,
+                        )
+                        if dca_res.get("event") == "dca_buy":
+                            telemetry.record("live", dca_sym, "dca_buy", dca_res)
+                            telemetry.alert(
+                                f"🟦 <b>DCA Cuantitativo ({dca_sym})</b>\n"
+                                f"Compra de acumulación en sobreventa extrema (RSI={dca_res.get('rsi')}).\n"
+                                f"Precio: <code>${dca_res.get('price'):,.2f}</code> | Qty: <code>{dca_res.get('qty')}</code>",
+                                category="buys",
+                            )
+                except Exception as dca_exc:
+                    logging.warning("Error en ciclo DCA cuantitativo: %s", dca_exc)
 
             completed_cycles += 1
             if cycles > 0 and completed_cycles >= cycles:

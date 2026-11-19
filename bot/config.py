@@ -140,6 +140,15 @@ class BotConfig:
     prefer_maker_entries: bool = True
     maker_timeout_seconds: int = 10
 
+    # Profit Sweep, Launchpool BNB & DCA Cuantitativo (Fase 20)
+    profit_sweep_pct: float = 0.30
+    earn_launchpool_auto_stake: bool = True
+    dca_enabled: bool = False
+    dca_assets: str = "BTCUSDT,ETHUSDT,BNBUSDT"
+    dca_rsi_threshold: float = 28.0
+    dca_cooldown_hours: int = 72
+    dca_quote_usdt: float = 6.0
+
     @property
     def symbols_to_trade(self) -> list[str]:
         return [s.strip().upper() for s in self.active_symbols.split(",") if s.strip()]
@@ -352,4 +361,13 @@ class BotConfig:
             ),
             prefer_maker_entries=_as_bool(os.getenv("PREFER_MAKER_ENTRIES"), cls.prefer_maker_entries),
             maker_timeout_seconds=int(os.getenv("MAKER_TIMEOUT_SECONDS", cls.maker_timeout_seconds)),
+            profit_sweep_pct=float(os.getenv("PROFIT_SWEEP_PCT", cls.profit_sweep_pct)),
+            earn_launchpool_auto_stake=_as_bool(
+                os.getenv("EARN_LAUNCHPOOL_AUTO_STAKE"), cls.earn_launchpool_auto_stake
+            ),
+            dca_enabled=_as_bool(os.getenv("DCA_ENABLED"), cls.dca_enabled),
+            dca_assets=os.getenv("DCA_ASSETS", cls.dca_assets),
+            dca_rsi_threshold=float(os.getenv("DCA_RSI_THRESHOLD", cls.dca_rsi_threshold)),
+            dca_cooldown_hours=int(os.getenv("DCA_COOLDOWN_HOURS", cls.dca_cooldown_hours)),
+            dca_quote_usdt=float(os.getenv("DCA_QUOTE_USDT", cls.dca_quote_usdt)),
         )

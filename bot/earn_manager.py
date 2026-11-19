@@ -385,7 +385,25 @@ class EarnManager:
                 pass
         if new_events:
             log.info("Earn: %d anuncios de airdrop nuevos detectados", len(new_events))
+            if getattr(self.cfg, "earn_launchpool_auto_stake", True):
+                lp_res = self.ensure_bnb_launchpool_ready()
+                return {"ok": True, "new_events": new_events, "launchpool_bnb_ready": lp_res}
         return {"ok": True, "new_events": new_events}
+
+    def ensure_bnb_launchpool_ready(self) -> dict[str, Any]:
+        """Suscribe BNB libre en Spot a Simple Earn Flexible para participar automáticamente en Launchpool/HODLer."""
+        try:
+            bnb_free = self._free_balance("BNB")
+        except Exception as exc:
+            return {"ok": False, "reason": str(exc)}
+        if bnb_free < 0.001:
+            return {"ok": True, "action": "none", "bnb_free": bnb_free, "reason": "below_min_bnb"}
+        try:
+            res = self.subscribe_flexible("BNB", bnb_free)
+            log.info("Earn Launchpool Ready: %.6f BNB suscritos a Simple Earn Flexible.", bnb_free)
+            return {"ok": True, "action": "subscribed_bnb", "amount": bnb_free, "result": res}
+        except Exception as exc:
+            return {"ok": False, "reason": str(exc)}
 
     # ------------------------------------------------------------------
     # Soft Staking (rendimiento sobre saldo spot elegible, sin bloqueo)
