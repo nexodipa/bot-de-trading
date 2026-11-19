@@ -363,6 +363,117 @@ class BinanceExecutionClient:
             params["newClientOrderId"] = client_id
         return self._call_signed(self.client.create_order, **params)
 
+    def create_limit_maker_buy(
+        self,
+        symbol: str,
+        quantity: float,
+        price: str | float,
+        newClientOrderId: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "symbol": symbol.upper(),
+            "side": "BUY",
+            "type": "LIMIT_MAKER",
+            "quantity": quantity,
+            "price": str(price),
+        }
+        if newClientOrderId:
+            params["newClientOrderId"] = newClientOrderId
+        return self._call_signed(self.client.create_order, **params)
+
+    def create_limit_maker_sell(
+        self,
+        symbol: str,
+        quantity: float,
+        price: str | float,
+        newClientOrderId: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "symbol": symbol.upper(),
+            "side": "SELL",
+            "type": "LIMIT_MAKER",
+            "quantity": quantity,
+            "price": str(price),
+        }
+        if newClientOrderId:
+            params["newClientOrderId"] = newClientOrderId
+        return self._call_signed(self.client.create_order, **params)
+
+    def execute_smart_maker_buy(
+        self,
+        symbol: str,
+        quantity: float,
+        bid_price: float,
+        filters: SymbolFilters,
+        timeout_seconds: int = 10,
+        newClientOrderId: str | None = None,
+    ) -> dict[str, Any]:
+        """Intenta compra LIMIT_MAKER (Post-Only) en el best bid para ahorrar comisiones.
+
+        Si la orden cruzaría el libro (-2010) o no se llena dentro de `timeout_seconds`,
+        cancela el remanente y cae de forma segura a orden MARKET por la cantidad faltante.
+        """
+        price_str = self.format_price(bid_price, filters)
+        qty_norm = self.normalize_quantity(quantity, filters)
+        if qty_norm <= 0 or float(price_str) <= 0:
+            return self.create_market_buy(symbol, quantity, newClientOrderId=newClientOrderId)
+
+        try:
+            maker_order = self.create_limit_maker_buy(
+                symbol=symbol,
+                quantity=qty_norm,
+                price=price_str,
+                newClientOrderId=newClientOrderId,
+            )
+        except Exception as exc:
+            msg = str(exc)
+            if "-2010" in msg or "immediately match" in msg.lower():
+                logger.info("[%s] LIMIT_MAKER cruzaría spread; fallback a MARKET.", symbol)
+                return self.create_market_buy(symbol, qty_norm, newClientOrderId=newClientOrderId)
+            raise
+
+        order_id = maker_order.get("orderId") if isinstance(maker_order, dict) else None
+        status = str(maker_order.get("status", "")).upper() if isinstance(maker_order, dict) else ""
+        if status == "FILLED" or order_id is None:
+            return maker_order
+
+        deadline = time.time() + max(1, int(timeout_seconds))
+        latest = maker_order
+        while time.time() < deadline:
+            time.sleep(1.0)
+            try:
+                latest = self.get_order_status(symbol, int(order_id))
+                st = str(latest.get("status", "")).upper()
+                if st in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}:
+                    if st == "FILLED":
+                        return latest
+                    break
+            except Exception:
+                pass
+
+        # Cancelar remanente no ejecutado y completar por MARKET si alcanza min_notional
+        try:
+            latest = self.cancel_order(symbol, int(order_id))
+        except Exception:
+            try:
+                latest = self.get_order_status(symbol, int(order_id))
+            except Exception:
+                pass
+
+        executed_qty = self._to_float(latest.get("executedQty"), 0.0) if isinstance(latest, dict) else 0.0
+        remaining_qty = self.normalize_quantity(max(qty_norm - executed_qty, 0.0), filters)
+        if remaining_qty > 0 and self.notional_is_valid(remaining_qty, float(price_str), filters):
+            fallback_cid = f"{newClientOrderId}_MKT" if newClientOrderId else None
+            mkt_order = self.create_market_buy(symbol, remaining_qty, newClientOrderId=fallback_cid)
+            if executed_qty > 0 and isinstance(mkt_order, dict):
+                mkt_exec = self._to_float(mkt_order.get("executedQty"), remaining_qty)
+                mkt_order["executedQty"] = str(executed_qty + mkt_exec)
+                mkt_quote = self._to_float(mkt_order.get("cummulativeQuoteQty"), 0.0)
+                maker_quote = self._to_float(latest.get("cummulativeQuoteQty"), 0.0)
+                mkt_order["cummulativeQuoteQty"] = str(maker_quote + mkt_quote)
+            return mkt_order
+        return latest
+
     def normalize_price(self, price: float, filters: SymbolFilters) -> float:
         p = max(price, 0.0)
         if filters.min_price > 0:

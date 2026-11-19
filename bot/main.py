@@ -1051,6 +1051,30 @@ class LiveTrader:
             return {"time": now.isoformat(), "event": "risk_pause", "reason": reason}
 
         if signal.action != "buy":
+            if getattr(self.cfg, "grid_enabled", False) and regime.name == "range":
+                try:
+                    from bot.grid_engine import QuantitativeRangeGrid
+                    if not hasattr(self, "_range_grid") or self._range_grid is None:
+                        self._range_grid = QuantitativeRangeGrid(
+                            levels=getattr(self.cfg, "grid_levels", 5),
+                            atr_mult=getattr(self.cfg, "grid_atr_mult", 2.0),
+                            max_quote_usdt=getattr(self.cfg, "grid_max_quote_usdt", 25.0),
+                        )
+                    grid_res = self._range_grid.evaluate_step(
+                        symbol=self.cfg.symbol,
+                        df=analysis_df,
+                        regime_label=regime.name,
+                        atr_value=atr_value,
+                        quote_free=quote_free,
+                        exec_client=self.exec,
+                        filters=self.symbol_filters,
+                        dry_run=not isinstance(self.exec, BinanceExecutionClient),
+                    )
+                    if grid_res.get("event") in {"grid_active", "grid_breakout_stop"}:
+                        self.last_processed_close_time = now
+                        return {"time": now.isoformat(), **grid_res}
+                except Exception as g_exc:
+                    logging.warning("[%s] Error en Grid Engine: %s", self.cfg.symbol, g_exc)
             self.last_processed_close_time = now
             return {"time": now.isoformat(), "event": "hold", "reason": signal.reason}
 
@@ -1279,9 +1303,29 @@ class LiveTrader:
         self.db_session.add(db_pos)
         self.db_session.commit()
 
-        # Fase 2: Ejecutar compra a mercado en Binance pasando newClientOrderId
+        # Fase 2: Ejecutar compra (Maker-Only Post-Only si está habilitado y hay best bid válido, con fallback a MARKET)
         try:
-            order = self.exec.create_market_buy(self.cfg.symbol, qty, newClientOrderId=client_order_id)
+            best_bid_for_maker = 0.0
+            if isinstance(current_ob, dict) and current_ob.get("bids"):
+                try:
+                    best_bid_for_maker = float(current_ob["bids"][0][0])
+                except (IndexError, ValueError, TypeError):
+                    best_bid_for_maker = 0.0
+            if (
+                getattr(self.cfg, "prefer_maker_entries", False)
+                and isinstance(self.exec, BinanceExecutionClient)
+                and best_bid_for_maker > 0
+            ):
+                order = self.exec.execute_smart_maker_buy(
+                    self.cfg.symbol,
+                    qty,
+                    bid_price=best_bid_for_maker,
+                    filters=self.symbol_filters,
+                    timeout_seconds=getattr(self.cfg, "maker_timeout_seconds", 10),
+                    newClientOrderId=client_order_id,
+                )
+            else:
+                order = self.exec.create_market_buy(self.cfg.symbol, qty, newClientOrderId=client_order_id)
         except Exception as e:
             err_msg = str(e)
             if "-2015" in err_msg or "permissions" in err_msg or getattr(self.cfg, "signal_provider_mode", False):

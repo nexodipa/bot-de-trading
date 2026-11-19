@@ -136,6 +136,22 @@ class BotConfig:
     ibkr_use_delayed_data: bool = True
     ibkr_standby_cash: float = 10000.0
 
+    # Ejecución Maker-Only (Post-Only) para ahorro de comisiones
+    prefer_maker_entries: bool = True
+    maker_timeout_seconds: int = 10
+
+    # Grid Trading Cuantitativo en Rango (Fase 18)
+    grid_enabled: bool = False
+    grid_max_quote_usdt: float = 25.0
+    grid_levels: int = 5
+    grid_atr_mult: float = 2.0
+
+    # Arbitraje Delta-Neutral de Funding Rate (Fase 19)
+    funding_arb_enabled: bool = False
+    funding_arb_min_apr: float = 12.0
+    funding_arb_min_capital_usdt: float = 200.0
+    funding_arb_max_allocation_pct: float = 0.25
+
     @property
     def symbols_to_trade(self) -> list[str]:
         return [s.strip().upper() for s in self.active_symbols.split(",") if s.strip()]
@@ -345,5 +361,19 @@ class BotConfig:
             ),
             ibkr_standby_cash=float(
                 os.getenv("IBKR_STANDBY_CASH", cls.ibkr_standby_cash)
+            ),
+            prefer_maker_entries=_as_bool(os.getenv("PREFER_MAKER_ENTRIES"), cls.prefer_maker_entries),
+            maker_timeout_seconds=int(os.getenv("MAKER_TIMEOUT_SECONDS", cls.maker_timeout_seconds)),
+            grid_enabled=_as_bool(os.getenv("GRID_ENABLED"), cls.grid_enabled),
+            grid_max_quote_usdt=float(os.getenv("GRID_MAX_QUOTE_USDT", cls.grid_max_quote_usdt)),
+            grid_levels=int(os.getenv("GRID_LEVELS", cls.grid_levels)),
+            grid_atr_mult=float(os.getenv("GRID_ATR_MULT", cls.grid_atr_mult)),
+            funding_arb_enabled=_as_bool(os.getenv("FUNDING_ARB_ENABLED"), cls.funding_arb_enabled),
+            funding_arb_min_apr=float(os.getenv("FUNDING_ARB_MIN_APR", cls.funding_arb_min_apr)),
+            funding_arb_min_capital_usdt=float(
+                os.getenv("FUNDING_ARB_MIN_CAPITAL_USDT", cls.funding_arb_min_capital_usdt)
+            ),
+            funding_arb_max_allocation_pct=float(
+                os.getenv("FUNDING_ARB_MAX_ALLOCATION_PCT", cls.funding_arb_max_allocation_pct)
             ),
         )
