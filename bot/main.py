@@ -1051,30 +1051,6 @@ class LiveTrader:
             return {"time": now.isoformat(), "event": "risk_pause", "reason": reason}
 
         if signal.action != "buy":
-            if getattr(self.cfg, "grid_enabled", False) and regime.name == "range":
-                try:
-                    from bot.grid_engine import QuantitativeRangeGrid
-                    if not hasattr(self, "_range_grid") or self._range_grid is None:
-                        self._range_grid = QuantitativeRangeGrid(
-                            levels=getattr(self.cfg, "grid_levels", 5),
-                            atr_mult=getattr(self.cfg, "grid_atr_mult", 2.0),
-                            max_quote_usdt=getattr(self.cfg, "grid_max_quote_usdt", 25.0),
-                        )
-                    grid_res = self._range_grid.evaluate_step(
-                        symbol=self.cfg.symbol,
-                        df=analysis_df,
-                        regime_label=regime.name,
-                        atr_value=atr_value,
-                        quote_free=quote_free,
-                        exec_client=self.exec,
-                        filters=self.symbol_filters,
-                        dry_run=not isinstance(self.exec, BinanceExecutionClient),
-                    )
-                    if grid_res.get("event") in {"grid_active", "grid_breakout_stop"}:
-                        self.last_processed_close_time = now
-                        return {"time": now.isoformat(), **grid_res}
-                except Exception as g_exc:
-                    logging.warning("[%s] Error en Grid Engine: %s", self.cfg.symbol, g_exc)
             self.last_processed_close_time = now
             return {"time": now.isoformat(), "event": "hold", "reason": signal.reason}
 
@@ -1315,6 +1291,7 @@ class LiveTrader:
                 getattr(self.cfg, "prefer_maker_entries", False)
                 and isinstance(self.exec, BinanceExecutionClient)
                 and best_bid_for_maker > 0
+                and self.cfg.strategy_mode not in {"breakout", "turtle_breakout"}
             ):
                 order = self.exec.execute_smart_maker_buy(
                     self.cfg.symbol,
@@ -1374,6 +1351,20 @@ class LiveTrader:
                 db_pos.is_active = False
                 self.db_session.commit()
                 raise
+
+        order_status = str(order.get("status", "")).upper() if isinstance(order, dict) else ""
+        raw_exec_qty = _to_float(order.get("executedQty"), 0.0) if isinstance(order, dict) else 0.0
+        if order_status in {"CANCELED", "CANCELLED", "REJECTED", "EXPIRED"} and raw_exec_qty <= 0:
+            db_pos.state = OrderState.CANCELLED.value
+            db_pos.error_details = f"Order {order_status} with zero fill"
+            db_pos.is_active = False
+            self.db_session.commit()
+            self.last_processed_close_time = now
+            return {
+                "time": now.isoformat(),
+                "event": "hold",
+                "reason": "maker_order_unfilled_canceled",
+            }
 
         fills = order.get("fills", []) if isinstance(order, dict) else []
         if fills:
@@ -2193,7 +2184,8 @@ def run_live_loop(
                     event = trader.step()
                     trader.save_state()
                     event_name = str(event.get("event", "live_event"))
-                    telemetry.record("live", symbol, event_name, event)
+                    if not (event_name == "hold" and event.get("reason") == "duplicate_candle"):
+                        telemetry.record("live", symbol, event_name, event)
                     if event_name in {"live_buy", "live_sell"}:
                         category = "buys" if "buy" in event_name else "sells"
                         try:

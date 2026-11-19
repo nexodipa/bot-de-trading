@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import logging.handlers
 import sqlite3
 import weakref
 from dataclasses import asdict, is_dataclass
@@ -63,7 +64,9 @@ def setup_logging(cfg: BotConfig) -> None:
         return
 
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    file_handler = logging.FileHandler(cfg.log_file, encoding="utf-8")
+    file_handler = logging.handlers.RotatingFileHandler(
+        cfg.log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
     file_handler.setFormatter(formatter)
 
     stream_handler = logging.StreamHandler()
