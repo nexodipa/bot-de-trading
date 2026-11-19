@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -29,11 +30,22 @@ __all__ = [
 def _is_unmocked_test_http_call() -> bool:
     """Impide llamadas HTTP reales a Binance Square cuando se ejecuta bajo test sin mock de requests.post."""
     in_test_runtime = (
-        "unittest" in sys.modules
-        or "pytest" in sys.modules
-        or os.getenv("PYTEST_CURRENT_TEST") is not None
+        os.getenv("PYTEST_CURRENT_TEST") is not None
         or os.getenv("BOT_DISABLE_LIVE_SQUARE", "").strip().lower() in {"1", "true", "yes"}
     )
+    if not in_test_runtime:
+        main_mod = sys.modules.get("__main__")
+        main_file = str(getattr(main_mod, "__file__", "") or "").lower()
+        if "unittest" in main_file or "pytest" in main_file:
+            in_test_runtime = True
+        elif "unittest" in sys.modules or "pytest" in sys.modules:
+            # Librerías científicas (sklearn/pandas) importan unittest en runtime productivo;
+            # verificar si realmente estamos dentro de un TestCase o runner de pytest en la pila.
+            for frame in inspect.stack():
+                fn = frame.filename.replace("\\", "/").lower()
+                if "/unittest/case.py" in fn or "/_pytest/" in fn:
+                    in_test_runtime = True
+                    break
     if not in_test_runtime:
         return False
     try:
